@@ -438,6 +438,13 @@ ClrLoop        stb       ,x+
 *         bne   ClrLoop
                endc
 
+* Strick: Get address of wiznet hardware from the CASBUF
+* where Axiom bootrom left it, and write it to
+* $1E in the direct page.  (This comes after
+* the direct page was cleared.)
+              ldu >$01DA+$0C            Twelve bytes into the CASBUF at $01DA
+              stu <$1E                  The BOOT_lemma module will get it from here.
+
 MoveTxt        leau      <L0011,pcr          point to OS-9 Welcome Message
                bsr       Move1               E=$00 already from TFM above...
 * 0  = crash
