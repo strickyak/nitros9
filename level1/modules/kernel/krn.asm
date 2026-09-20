@@ -110,6 +110,12 @@ OS9Cold             equ       *         ; define assembler symbol
 *]]] Wildbits port
                   ENDC
 
+                  IFNE    FLAT65280
+                    clra                ; A = 0
+                    clrb                ; B = 0 (D = $0000)
+                    tfr       b,dp      ; set direct page to 0
+                    ldx       #$0400    ; X = $0400 for system globals setup
+                  ELSE
 * Clear out system globals from $0000-$0400.
                     ldx       #$0000    ; start clearing memory at $0000
                     ldy       #$0400    ; get the number of bytes to clear
@@ -119,6 +125,7 @@ OS9Cold             equ       *         ; define assembler symbol
 loop@               std       ,x++      ; save off at X and increment
                     leay      -2,y      ; decrement counter
                     bne       loop@     ; continue if not zero
+                  ENDC
 
 * Set up the system globals area.
                     inca                ; D = $100
@@ -135,6 +142,10 @@ loop@               std       ,x++      ; save off at X and increment
                     std       <D.ModDir ; $300 = module directory starting address
                     stx       <D.ModDir+2 ; X = $400 = module directory ending address
 
+                  IFNE    FLAT65280
+                    ldx       #$FF00    ; top of flat RAM ($0000-$FEFF), Red Page starts at $FF00
+                    stx       <D.MLIM   ; save off as the memory limit
+                  ELSE
 * This routine checks for RAM by writing a pattern at an address
 * then reading it back for validation. It may not be needed, so it's
 * conditionalized.
@@ -189,6 +200,7 @@ EndOfRAM@           leax      ,y        ; X = end of RAM
                   ENDC
                   ENDC
                     stx       <D.MLIM   ; save off as the memory limit
+                  ENDC
 
                   IFNE    wildbits ; begin conditional assembly for wildbits
 *[[[ Wildbits port
@@ -207,6 +219,12 @@ loop@               lda       ,x+       ; get source byte
                     bne       loop@     ; branch if not done
                     puls      x         ; recover the saved RAM upper limit
 
+                  IFNE    FLAT65280
+                    ldx       #$0800    ; start scanning memory at $0800
+                    stx       <D.BTHI   ; initialize D.BTHI with module start
+                    ldy       #$FEF8    ; stop at $FEF8 (upper limit before I/O page)
+                    lbsr      ValMods   ; validate preloaded modules
+                  ELSE
 * Atari has bootfile already in memory
                   IFNE    atari   ; begin conditional assembly for atari
 *[[[ ATARI LIBER809 port
@@ -237,6 +255,7 @@ loop@               lda       ,x+       ; get source byte
                   ENDC
 
                     lbsr      ValMods   ; call local routine ValMods
+                  ENDC
 
 * Some platforms don't have contiguous RAM in the 64K address space due to "holes"
 * for areas such as I/O. For these platforms, we have to perform a separate
@@ -301,6 +320,15 @@ copy@               ldd       ,y++      ; get vector bytes
 *   bit 7 of 0,x corresponds to page 0, bit 6 to page 1 etc.
 *   bit 7 of 1,x corresponds to page 8, bit 6 to page 9 etc.
                     ldx       <D.FMBM   ; get free memory bitmap in X
+                  IFNE    FLAT65280
+                    ldd       <D.BTHI   ; get end of highest preloaded module
+                    addd      #$00FF    ; round up to page boundary
+                    tfr       a,b       ; B = number of pages to reserve
+                    clra                ; Y = bit count
+                    tfr       d,y
+                    clrb                ; D = starting bit 0
+                    lbsr      AllocBit  ; mark pages 0 through (D.BTHI rounded up) as allocated
+                  ELSE
                   IFNE    atari   ; begin conditional assembly for atari
 *[[[ ATARI LIBER809 port
 * Atari needs $0000-$08FF and $D000-$D7FF reserved.
@@ -326,6 +354,7 @@ copy@               ldd       ,y++      ; get vector bytes
                     ldb       #%11111000 ; load B from #%11111000
                     stb       ,x        ; mark $0000-$04FF as allocated
 *]]] NOT(ATARI LIBER809 port | CORSHAM port)
+                  ENDC
                   ENDC
                   ENDC
 
@@ -536,6 +565,40 @@ callerr@            comb                ; set carry for error state
 * Entry: X = The address to start searching.
 *        Y = The address to stop (actually stops at Y-1).
 ValMods             pshs      y         ; save off Y
+                  IFNE    FLAT65280
+* Phase 1: Fast stride-2 pre-scan for non-zero byte across zeroed RAM
+ValPreScan          cmpx      #$FEF8    ; reached upper search boundary?
+                    bcc       ValDone   ; if at or above $FEF8, done
+                    tst       ,x        ; test byte at current stride
+                    bne       ValFoundNZ ; non-zero byte found!
+                    leax      2,x       ; advance stride by 2 bytes
+                    bra       ValPreScan
+
+* Phase 2: Back up 1 address, then scan byte-by-byte for $87CD sync word
+ValFoundNZ          leax      -1,x      ; back up 1 address (catches $87 if stride hit $CD)
+ValSlowScan         cmpx      #$FEF8    ; reached upper search boundary?
+                    bcc       ValDone   ; if at or above $FEF8, done
+                    ldd       ,x        ; read 2-byte candidate sync
+                    cmpd      #M$ID12   ; does it match $87CD?
+                    beq       ValPhase3 ; if matched, attempt module validation
+                    leax      1,x       ; advance by 1 byte
+                    bra       ValSlowScan ; continue byte-by-byte scan
+
+* Phase 3: Validate module header & advance
+ValPhase3           lbsr      ValMod    ; validate module
+                    bcs       ValErr1   ; branch if validation error
+                    ldd       M$Size,x  ; get validated module size
+                    leax      d,x       ; advance past the entire module
+                    stx       <D.BTHI   ; record highest module end address
+                    bra       ValPreScan ; resume fast pre-scan for next module
+
+ValErr1             cmpb      #E$KwnMod ; already known module?
+                    beq       ValDone   ; if known module, done
+                    leax      1,x       ; false sync match, advance 1 byte
+                    bra       ValSlowScan
+
+ValDone             puls      y,pc      ; restore Y and return
+                  ELSE
 loop@               lbsr      ValMod    ; go validate module
                     bcs       ValErr    ; branch if error
                     ldd       M$Size,x  ; get size of module into D
@@ -547,6 +610,7 @@ ValErr              cmpb      #E$KwnMod ; did the validation check show a known 
 valcheck            cmpx      ,s        ; check if we're at end
                     bcs       loop@     ; branch if not
 ex@                 puls      y,pc      ; restore Y and return
+                  ENDC
 
 * This vector code that the kernel copies to low RAM ($0100).
 VectCode            bra       SWI3Jmp   ; $0100
@@ -610,11 +674,11 @@ P2Nam               fcs       /krnp2/
 
 EOMTop              equ       *         ; define assembler symbol
 
-                  IFEQ    corsham+wildbits ; begin conditional assembly for corsham+wildbits
-*[[[ NOT(CORSHAM port | Wildbits port)
+                  IFEQ    corsham+wildbits+FLAT65280 ; begin conditional assembly for corsham+wildbits+FLAT65280
+*[[[ NOT(CORSHAM port | Wildbits port | FLAT65280)
                     emod
 eom                 equ       *         ; define assembler symbol
-*]]] NOT(CORSHAM port | Wildbits port)
+*]]] NOT(CORSHAM port | Wildbits port | FLAT65280)
                   ENDC
 
 Vectors             fdb       SWI3      ; sWI3
@@ -630,11 +694,11 @@ Vectors             fdb       SWI3      ; sWI3
 *]]] ATARI LIBER809 port
                   ENDC
 
-                  IFNE    corsham+wildbits ; begin conditional assembly for corsham+wildbits
-*[[[ CORSHAM port | Wildbits port
+                  IFNE    corsham+wildbits+FLAT65280 ; begin conditional assembly for corsham+wildbits+FLAT65280
+*[[[ CORSHAM port | Wildbits port | FLAT65280
                     emod
 eom                 equ       *         ; define assembler symbol
-*]]] CORSHAM port | Wildbits port
+*]]] CORSHAM port | Wildbits port | FLAT65280
                   ENDC
 EOMSize             equ       *-EOMTop  ; define assembler symbol
 

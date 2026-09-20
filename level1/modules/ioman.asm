@@ -1080,6 +1080,7 @@ AllcPDsc            ldx       <D.Proc   ; get pointer to curr proc in X
                     ldx       <D.PthDBT ; get ptr to path desc base table
                     os9       F$All64   ; allocate 64 byte page
                     bcs       AllocPathReturn ; branch if error
+                    sta       PD.PD,y   ; set path number in descriptor
                     inc       PD.CNT,y  ; set path count
                     stb       PD.MOD,y  ; save mode byte
                   IFGT    Level-1

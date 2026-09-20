@@ -27,7 +27,9 @@
                   IFEQ    Level-1 ; begin conditional assembly for Level-1
 
 * F$Chain user state entry point.
-FChain              bsr       DoChain   ; do the F$Chain
+FChain
+* F$Chain system state entry point.
+SFChain             bsr       DoChain   ; do the F$Chain
                     bcs       chainerr@ ; branch if error
                     orcc      #IntMasks ; mask interrupts
                     ldb       P$State,x ; get process state
@@ -37,9 +39,6 @@ resched@            ldu       <P$PModul,x ; get pointer to the module for the cu
                     os9       F$Unlink  ; unlink it
                     os9       F$AProc   ; add it to active process queue
                     os9       F$NProc   ; activate it
-* F$Chain system state entry point.
-SFChain             bsr       DoChain   ; do the F$Chain
-                    bcc       resched@  ; branch if OK
 chainerr@           pshs      b         ; save off B for now
                     stb       <P$Signal,x ; save off error code
                     ldb       P$State,x ; get process state
@@ -124,6 +123,7 @@ setregs@            ldx       <D.Proc   ; get pointer to current process descrip
                     leau      d,u       ; point U to that
                     stu       R$PC,y    ; put that offset in the caller's PC
                     clrb                ; B = 0
+                    bra       ex@       ; branch to success return
 badfork@            ldb       #E$IForkP ; illegal fork parameter
 ex@                 puls      pc,u,x    ; return to caller
 

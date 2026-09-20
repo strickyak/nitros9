@@ -27,6 +27,7 @@ rel_picothing.srec
 helpmsg
 *.dsk
 *.srec
+*.img
 
 # usim09pt FRAM persistence file (emulator artifact, holds reset vector)
 picothing.fram

@@ -69,12 +69,19 @@ start               equ       *         ; define assembler symbol
                     ldx       <D.PrcDBT ; get process descriptor table in X
                     os9       F$All64   ; allocate a new 64 byte page
                     bcs       FatalErr  ; failed to allocate
+                    sta       P$ID,y    ; set process ID (1)
                     stx       <D.PrcDBT ; save off
                     sty       <D.Proc   ; save off new process descriptor pointer
+                  IFNE    FLAT65280
+                    clra                ; no user data memory allocated yet
+                    clrb
+                    std       P$ADDR,y  ; save 0 off in P$ADDR and P$PagCnt
+                  ELSE
                     tfr       s,d       ; transfer the stack pointer to D
                     deca                ; set address to 1 minus stack's MSB
                     ldb       #$01      ; set page count to 1 (256 bytes)
                     std       P$ADDR,y  ; save off in P$ADDR and P$PagCnt
+                  ENDC
                     lda       #SysState ; get system state flag
                     sta       P$State,y ; set the state in the process descriptor
                     ldu       <D.Init   ; get init module address in U
