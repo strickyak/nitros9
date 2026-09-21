@@ -2065,6 +2065,7 @@ MoveErrorToProcess  os9       F$Move    ; copy error message into process' buffe
 * 6809/6309 - This ldx is useless - X is immediately reloaded, and U gets D.Proc
 *         ldx   <D.Proc        Get process descriptor
                     leax      ,s        ; point to error message
+                    ldy       #ErrMessL ; get length of text
                     ldu       <D.Proc   ; get ptr to process descriptor
                     lda       <P$Path+2,u ; get Error path #
                     os9       I$WritLn  ; write message

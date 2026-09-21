@@ -48,7 +48,7 @@ start               equ       *
 name                fcs       "Init"
                     fcb       edition
 
-DefProg             fcs       "Shell"
+DefProg             fcs       "SysGo"
 DefDev              fcs       "/DD"
 DefCons             fcs       "/Term"
 DefBoot             fcs       "Boot"
