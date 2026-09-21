@@ -304,7 +304,7 @@ SvcIRQ
                     tfr       a,dp                set direct page to zero
                   IFNE    CLOCK_AND_STOP
                     lda       >CLOCK_AND_STOP.Base
-                    bita      #$01                clock causing IRQ?
+                    bita      #CLOCK_AND_STOP.Tick clock causing IRQ?
                     bne       ClearInt            yes, handle clock tick
                     jmp       [>D.SvcIRQ]         else service other possible IRQ
 ClearInt
