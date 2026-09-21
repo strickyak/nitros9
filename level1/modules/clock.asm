@@ -61,7 +61,9 @@ name                fcs       "Clock"
                     fcb       edition
 
 
+                    IFNDEF    TkPerTS
 TkPerTS             equ       TkPerSec/10         ticks per time slice
+                    ENDC
 
 *
 * Table to set up Service Calls
@@ -149,6 +151,13 @@ InitCont
 around@
 
 * Initialize clock hardware
+                  IFNE    CLOCK_AND_STOP
+* flat65280v2 CLOCK_AND_STOP: initialize periodic interrupting clock
+                    lda       #CLOCK_AND_STOP.Value
+                    sta       >CLOCK_AND_STOP.Base
+                    clra
+                    rts
+                  ELSE
                   IFNE    picothing
 * Pico-Thing: enable the 50Hz tick timer
                     pshs      cc        save the interrupt state
@@ -284,6 +293,7 @@ ClkEx
                     endc
                   ENDC
                     puls      cc,pc
+                  ENDC
 
 *
 * Clock IRQ Entry Point
@@ -292,6 +302,15 @@ ClkEx
 SvcIRQ
                     clra
                     tfr       a,dp                set direct page to zero
+                  IFNE    CLOCK_AND_STOP
+                    lda       >CLOCK_AND_STOP.Base
+                    bita      #$01                clock causing IRQ?
+                    bne       ClearInt            yes, handle clock tick
+                    jmp       [>D.SvcIRQ]         else service other possible IRQ
+ClearInt
+                    lda       #CLOCK_AND_STOP.Value
+                    sta       >CLOCK_AND_STOP.Base quench firing and enable next IRQ
+                  ELSE
                   IFNE    picothing
                     lda       >TICK.Stat read and acknowledge tick timer
                     bmi       ClearInt  bit 7 set = tick timer fired
@@ -342,6 +361,7 @@ L0032               tst       PIA0Base+2          clear interrupt
                     endc
                     endc
                     endc
+                  ENDC
                     dec       <D.Tick             decrement tick counter
                     bne       L007F               go around if not zero
                     ldb       <D.Sec              get minutes/seconds
