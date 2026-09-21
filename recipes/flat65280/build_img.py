@@ -2,31 +2,34 @@
 import sys
 import os
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+MOD_DIR = os.path.join(SCRIPT_DIR, ".mods")
+
 IMG_SIZE = 65536
 START_ADDR = 0x0800
 
 MOD_PATHS = [
-    ("Kernel (part 1)", "recipes/flat65280/.mods/krn"),
-    ("Kernel (part 2)", "recipes/flat65280/.mods/krnp2"),
-    ("Configuration",   "recipes/flat65280/.mods/init"),
-    ("I/O Manager",     "recipes/flat65280/.mods/ioman"),
-    ("RBF Manager",     "recipes/flat65280/.mods/rbf"),
-    ("SCF Manager",     "recipes/flat65280/.mods/scf"),
-    ("ACIA Driver",     "recipes/flat65280/.mods/sc6850"),
-    ("Term Descriptor", "recipes/flat65280/.mods/term"),
-    ("EmuDsk Driver",   "recipes/flat65280/.mods/emudsk"),
-    ("DD Descriptor",   "recipes/flat65280/.mods/dd"),
-    ("Shell Command",   "recipes/flat65280/.mods/shell_21"),
-    ("mfree Command",   "recipes/flat65280/.mods/mfree"),
-    ("free Command",    "recipes/flat65280/.mods/free"),
-    ("procs Command",   "recipes/flat65280/.mods/procs"),
-    ("mdir Command",    "recipes/flat65280/.mods/mdir"),
-    ("dir Command",     "recipes/flat65280/.mods/dir"),
-    ("stop Command",    "recipes/flat65280/.mods/stop"),
+    ("Kernel (part 1)", os.path.join(MOD_DIR, "krn")),
+    ("Kernel (part 2)", os.path.join(MOD_DIR, "krnp2")),
+    ("Configuration",   os.path.join(MOD_DIR, "init")),
+    ("I/O Manager",     os.path.join(MOD_DIR, "ioman")),
+    ("RBF Manager",     os.path.join(MOD_DIR, "rbf")),
+    ("SCF Manager",     os.path.join(MOD_DIR, "scf")),
+    ("ACIA Driver",     os.path.join(MOD_DIR, "sc6850")),
+    ("Term Descriptor", os.path.join(MOD_DIR, "term")),
+    ("EmuDsk Driver",   os.path.join(MOD_DIR, "emudsk")),
+    ("DD Descriptor",   os.path.join(MOD_DIR, "dd")),
+    ("Shell Command",   os.path.join(MOD_DIR, "shell_21")),
+    ("mfree Command",   os.path.join(MOD_DIR, "mfree")),
+    ("free Command",    os.path.join(MOD_DIR, "free")),
+    ("procs Command",   os.path.join(MOD_DIR, "procs")),
+    ("mdir Command",    os.path.join(MOD_DIR, "mdir")),
+    ("dir Command",     os.path.join(MOD_DIR, "dir")),
+    ("stop Command",    os.path.join(MOD_DIR, "stop")),
     ("Basic09",         "/home/strick/modoc/coco-shelf/nitros9-languages/basic09/basic09_6809"),
 ]
 
-output_img = "recipes/flat65280/flat65280.img"
+output_img = os.path.join(SCRIPT_DIR, "flat65280.img")
 if len(sys.argv) > 1:
     output_img = sys.argv[1]
 

@@ -19,7 +19,12 @@ CMDS = shell_21 mfree free procs mdir dir stop
 
 ALL_MODS = $(addprefix $(MODDIR)/, $(KERNEL) $(CONFIG) $(MANAGERS) $(DRIVERS) $(DESCRIPTORS) $(CMDS))
 
-all: $(ALL_MODS)
+IMG = flat65280.img
+
+all: $(IMG)
+
+$(IMG): $(ALL_MODS) build_img.py
+	python3 build_img.py $@
 
 $(MODDIR)/term: $(L1MD)/term_sc6850.asm | $(MODDIR)
 	$(AS) $(AFLAGS) $< $(ASOUT)$@
@@ -28,4 +33,4 @@ $(MODDIR)/dd: $(L1MD)/emudskdesc.asm | $(MODDIR)
 	$(AS) $(AFLAGS) -DDD=1 -DDNum=0 $< $(ASOUT)$@
 
 clean:
-	$(RM) -r $(MODDIR)
+	$(RM) -r $(MODDIR) $(IMG) *.list *.map
