@@ -76,7 +76,8 @@ fi
 echo "Creating startup script..."
 tmp_startup="$(mktemp)"
 cat <<'EOF' > "$tmp_startup"
-chx CMDS
+tmode pau=0 </2
+setime 2001/01/01
 EOF
 "$OS9" copy -o=0 -l "$tmp_startup" "$TARGET,startup"
 "$OS9" attr -q -npw -pr -ne -w -r "$TARGET,startup"
