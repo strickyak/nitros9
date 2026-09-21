@@ -22,6 +22,7 @@ MOD_PATHS = [
     ("procs Command",   "recipes/flat65280/.mods/procs"),
     ("mdir Command",    "recipes/flat65280/.mods/mdir"),
     ("dir Command",     "recipes/flat65280/.mods/dir"),
+    ("stop Command",    "recipes/flat65280/.mods/stop"),
     ("Basic09",         "/home/strick/modoc/coco-shelf/nitros9-languages/basic09/basic09_6809"),
 ]
 

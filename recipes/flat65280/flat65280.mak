@@ -15,7 +15,7 @@ CONFIG = init
 MANAGERS = ioman rbf scf
 DRIVERS = sc6850 emudsk
 DESCRIPTORS = term dd
-CMDS = shell_21 mfree free procs mdir dir
+CMDS = shell_21 mfree free procs mdir dir stop
 
 ALL_MODS = $(addprefix $(MODDIR)/, $(KERNEL) $(CONFIG) $(MANAGERS) $(DRIVERS) $(DESCRIPTORS) $(CMDS))
 
