@@ -23,10 +23,19 @@ FLAT65280           set       1
                     ENDC
 
 * Ticks per second and time slice
-                    IFNDEF    TkPerSec
+                    IFDEF     TkPerSec
+                    IFNE      TkPerSec-6
+                    ERROR     TkPerSec must be 6
+                    ENDC
+                    ELSE
 TkPerSec            equ       6
                     ENDC
-                    IFNDEF    TkPerTS
+
+                    IFDEF     TkPerTS
+                    IFNE      TkPerTS-1
+                    ERROR     TkPerTS must be 1
+                    ENDC
+                    ELSE
 TkPerTS             equ       1
                     ENDC
 
