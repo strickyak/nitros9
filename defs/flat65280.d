@@ -22,9 +22,12 @@ FLAT65280.D         set       1
 FLAT65280           set       1
                     ENDC
 
-* Ticks per second
+* Ticks per second and time slice
                     IFNDEF    TkPerSec
-TkPerSec            SET       60
+TkPerSec            equ       6
+                    ENDC
+                    IFNDEF    TkPerTS
+TkPerTS             equ       1
                     ENDC
 
 HW.Page             set       $00                 Device descriptor hardware page (extended addr)
@@ -48,6 +51,7 @@ CLOCK_AND_STOP.R50Hz      equ       $10                 Bits 4..5: 50 Hz rate
 CLOCK_AND_STOP.R6Hz       equ       $20                 Bits 4..5: 6 Hz rate
 CLOCK_AND_STOP.R01Hz      equ       $30                 Bits 4..5: 0.1 Hz rate (1 tick / 10s)
 CLOCK_AND_STOP.RateM      equ       $30                 Bits 4..5: Clock rate mask
+CLOCK_AND_STOP.Value      equ       (CLOCK_AND_STOP.R6Hz|CLOCK_AND_STOP.IRQEn|CLOCK_AND_STOP.Tick)
 CLOCK_AND_STOP.Exit0      equ       $FC                 Abrupt stop: exit(0)
 CLOCK_AND_STOP.Exit1      equ       $FD                 Abrupt stop: exit(1)
 CLOCK_AND_STOP.Crash      equ       $FE                 Abrupt stop: crash / core dump
