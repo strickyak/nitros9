@@ -6,7 +6,7 @@ LEVEL = 1
 include ../rules.mak
 -include recipe.mak
 
-AFLAGS += -I. -I$(L1PD) -I$(L1PMD) -I$(L1PD)/defs -I$(L1MD)/kernel -I$(L1MD) -DFLAT65280=1
+AFLAGS += -I. -I$(L1PD) -I$(L1PMD) -I$(L1MD)/kernel -I$(L1MD) -DFLAT65280=1
 
 MODDIR = .mods
 
