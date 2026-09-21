@@ -39,8 +39,8 @@ EMU.BUF             equ       $FF84
 EMU.DRV             equ       $FF86
 
 * CLOCK_AND_STOP register ($FF87)
+CLOCK_AND_STOP            equ       1                   Present for conditional assembly
 CLOCK_AND_STOP.Base       equ       $FF87
-CLOCK_PORT                equ       $FF87
 CLOCK_AND_STOP.Tick       equ       %00000001           Bit 0: Clock tick flag (R/W1C)
 CLOCK_AND_STOP.IRQEn      equ       %00000010           Bit 1: IRQ enable when tick=1 (R/W)
 CLOCK_AND_STOP.R60Hz      equ       $00                 Bits 4..5: 60 Hz rate
