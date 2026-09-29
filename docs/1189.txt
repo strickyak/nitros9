@@ -1,0 +1,148 @@
+title $A000 bug in OS9Boot for coco3, NitrOS-9 Level 2
+user strick
+ip 73.190.230.62
+vol 1
+lock ********
+
+I've found a bug in NitrOS9 Level2, using the usual coco3 boot scheme ( {REL,BOOT,KRN} at $2600 and then loading OS9Boot) but doing it on my TFR9 single board computer.     If you don't have enough modules in your OS9BOOT to get down to $A000, then a process can have its kernel Proc Structure allocated at or above $A000  (in my case, at $A100), and then when it makes OS9 system calls, the code that copies your registers back from the last few bytes of the proc structure (in my case in $A2Fx) maps your process's stack block in the $A000-$BFFF block -- and so you copy junk to the return registers, including the PC.    The workaround is to add a few more modules to the OS9BOOT, so F$SRqMem cannot allocate $Axxx to a Proc structure.     ( FYI, I'm using EMUDSK for /DD and SC6850 for /TERM. )
+
+
+
+/file PROBLEM-Nov6
+
+
+With your browser, view the text file PROBLEM-Nov6, linked just above.
+
+Using Control-F, find the two places where the word "problem" occurs.
+
+Just above it, you will see
+/box(
+/pre(
+# - ffff 02  = #1457162
+C_POKE 01ffa5 06 (was 02)
+# w ffa5 06
+# --- IOPAGE WRITE: addr ffa5 flags 2206 data 6
+C_POKE 01ffa6 3e (was 03)
+# w ffa6 3e
+# --- IOPAGE WRITE: addr ffa6 flags 63e data 3e
+/pre)
+/box)
+
+There is one "# r" line for each read cycle, and one "# w" for each write cycle,
+and "# - ffff" for an extra non-memory cycle. Numbers after "#" like "#1457167"
+are CPU cycle numbers, and are a unique way to find things in the file.
+
+(For each write cycle, there is also a C_POKE line before the "# w" line,
+and if it is in the $FFxx page, there is a "# --- IOPAGE WRITE:"
+line after it, for extra verbosity.   You can ignore those.)
+
+What is important is that 0x06 and 0x3E are written to addresses
+$FFA5 and $FFA6.  These remap the $[AB]xxx and $[CD]xxx MMU blocks
+for the kernel mode (task 0).
+
+Now look between the two "problem" words and you see an LDU and a STU instruction:
+
+/box(
+/pre(
+
+# @ f2bf ee  = #1457167 T0(0 3e 3e 1  4 6 3e 3f):07f2bf :: "krn.0edf349400"+02bf l@     ldu  ,x++    get the source bytes
+# r f2c0 81  = #1457168
+# r f2c1 ef  = #1457169
+# - ffff 02  = #1457170
+# - ffff 02  = #1457171
+# - ffff 02  = #1457172
+
+# r a2f4 ff  =Y #1457173
+# r a2f5 00  = #1457174
+
+# @ f2c1 ef  = #1457175 T0(0 3e 3e 1  4 6 3e 3f):07f2c1 :: "krn.0edf349400"+02c1        stu  ,y++    and save them in the destination
+# r f2c2 a1  = #1457176
+# r f2c3 5a  = #1457177
+# - ffff 02  = #1457178
+# - ffff 02  = #1457179
+# - ffff 02  = #1457180
+
+C_POKE 00c2f2 ff (was 80)
+# w a2f2 ff
+C_POKE 00c2f3 00 (was 02)
+# w a2f3 00
+
+problem
+/pre)
+/box)
+
+At the end of the LDU, it's reading from addresses $A2F4 and $A2F5.
+
+At the end of the STU, it's writing to addresses $A2F2 and $A2F3.
+
+Notice this is an a loop -- there is soon a " bn  l@    branch if not done"
+and the LDU and STU are repeated.
+
+That's how I noticed the problem.  The source and destination buffers overlap!
+The source and destination addresses are only different by 2, but the
+buffers are longer than 2 bytes, but the buffers are 12 bytes long (see cycle #1457165).
+That's probably not what was intended.
+
+What is happening is the destination is hardwired to use MMU Block
+with offset 5:
+/box(
+/pre(
+# @ f2ba fd  = #1457159 T0(0 3e 3e 1  4 2 3 3f):07f2ba :: "krn.0edf349400"+02ba                     std       >DAT.Regs+5         map in the blocks
+/pre)
+/box)
+
+And what is the source?  It's the system stack for the user process.
+
+/box(
+/pre(
+# @ db77 9e  = #1456884 T0(0 3e 3e 1  4 2 3 3f):007b77 :: "ioman.0a2512cd6d"+05b4   ldx    <D.Proc   Get current process dsc ptr
+# r db78 50  = #1456885
+# - ffff 02  = #1456886
+# r 0050 a1  =Y #1456887
+# r 0051 00  = #1456888
+/pre)
+/box)
+
+See that "a1" then "00" get loaded into X from D.Proc.
+So the Proc structure for the current process is at $A100,
+and is $200 bytes long.   At the end of it is the system stack
+for the process, around $A2F4.
+
+After the buffer copy is done, and the MMU is restored,
+this is executed:
+
+/box(
+/pre(
+# @ f2cf 35  = #1457314 T0(0 3e 3e 1  4 2 3 3f):07f2cf :: "krn.0edf349400"+02cf    puls  cc,x,y,u,pc  restore & return
+# r f2d0 f1  = #1457315
+# - ffff 02  = #1457316
+# - ffff 02  = #1457317
+# r a2eb 84  = #1457318
+# r a2ec a1  = #1457319
+# r a2ed 00  = #1457320
+# r a2ee a6  = #1457321
+# r a2ef 40  = #1457322
+# r a2f0 a2  = #1457323
+# r a2f1 f4  = #1457324
+# r a2f2 f2  = #1457325
+# r a2f3 76  = #1457326
+# r a2f4 84  = #1457327
+/pre)
+/box)
+
+You see that the system stack that it is pulling from
+is in the $A2F2 range, there at the end of that instruction.
+
+
+
+So the code that hardwired using MMU Block Offset 5 ($[AB]xxx) for the
+destination was assuming that no Proc Structure could be that high
+in Task0 RAM.   If your kernel modules are small and few enough,
+that assumption is wrong.
+
+/section Confession:
+I don't think I'm understanding the entire situation as well now,
+when I'm trying to explain it, as I did back when I saved the trace file.
+
+However I'm confident that my conclusion is accurate,
+that this code cannot work unless proc structures are always below

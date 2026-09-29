@@ -81,7 +81,7 @@ MName               fcs       /Krn/
                     fcc       /www/
                   ELSE
                   IFNE    deep65280 ; begin conditional assembly for deep65280
-                    fill      $39,469   ; pad so SWIStack lands at $FEDF
+                    fill      $39,481   ; pad so SWIStack lands at $FEDF
                   ELSE
                   IFNE    wildbits ; begin conditional assembly for wildbits
                     fcc       /www.nitros9.org /
@@ -697,21 +697,15 @@ l@                  sta       b,x       ; store the flag in the appropriate offs
 dp_blk@             sta       ,x+
                     decb
                     bne       dp_blk@
-* Mark pages $20..$7F as RAMinUse (preloaded modules)
-* Leave pages $80..$ED free (0) for dynamic system allocation (F$SRqMem)
-* Mark pages $EE..$FF as RAMinUse/NotRAM (Kernel and I/O)
+* Mark pages $99..$FF as RAMinUse/NotRAM (preloaded modules in slots 4..7, Krn & I/O)
+* Leave pages $20..$98 free (0) for dynamic system allocation (F$SRqMem)
                     ldx       <D.SysMem
-                    leax      $20,x     ; page $20 ($2000)
+                    ldb       #$99      ; offset to page $99 ($9900, start of module area)
+                    abx
                     lda       #RAMinUse
-                    ldb       #$60      ; 96 pages ($20..$7F) for preloaded modules
-dp_smap1@           sta       ,x+
-                    decb
-                    bne       dp_smap1@
-                    leax      $6E,x     ; skip free system pages $80..$ED (110 pages)
-                    ldb       #$12      ; 18 pages ($EE..$FF) for Krn & I/O
-dp_smap2@           sta       ,x+
-                    decb
-                    bne       dp_smap2@
+dp_smap@            sta       ,x+
+                    incb                ; 103 pages ($99..$FF) for modules, Krn & I/O
+                    bne       dp_smap@
                     lda       #NotRAM
                     sta       -1,x      ; page $FF is I/O
 * Validate preloaded modules slot by slot (slots 1 through 7)

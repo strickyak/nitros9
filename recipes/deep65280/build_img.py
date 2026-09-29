@@ -13,27 +13,39 @@ KRN_START_ADDR = 0xEE00   # Kernel start ($EE00 in Slot 7)
 
 KRN_PATH = os.path.join(MOD_DIR, "krn")
 
-MOD_PATHS = [
-    ("Kernel (part 2)", os.path.join(MOD_DIR, "krnp2")),
-    ("Configuration",   os.path.join(MOD_DIR, "init")),
-    ("I/O Manager",     os.path.join(MOD_DIR, "ioman")),
-    ("RBF Manager",     os.path.join(MOD_DIR, "rbf")),
-    ("SCF Manager",     os.path.join(MOD_DIR, "scf")),
-    ("ACIA Driver",     os.path.join(MOD_DIR, "sc6850")),
-    ("Clock Driver",    os.path.join(MOD_DIR, "clock")),
-    ("Term Descriptor", os.path.join(MOD_DIR, "term")),
-    ("EmuDsk Driver",   os.path.join(MOD_DIR, "emudsk")),
-    ("DD Descriptor",   os.path.join(MOD_DIR, "dd")),
-    ("SysGo Module",    os.path.join(MOD_DIR, "sysgo")),
-    ("Shell Command",   os.path.join(MOD_DIR, "shell_21")),
-    ("mfree Command",   os.path.join(MOD_DIR, "mfree")),
-    ("free Command",    os.path.join(MOD_DIR, "free")),
-    ("procs Command",   os.path.join(MOD_DIR, "procs")),
-    ("mdir Command",    os.path.join(MOD_DIR, "mdir")),
-    ("dir Command",     os.path.join(MOD_DIR, "dir")),
-    ("setime Command",  os.path.join(MOD_DIR, "setime")),
-    ("date Command",    os.path.join(MOD_DIR, "date")),
-    ("stop Command",    os.path.join(MOD_DIR, "stop")),
+SLOT_GROUPS = [
+    # Slot 4 ($8000..$9FFF): Remaining commands abutting $A000
+    (0x8000, 0xA000, [
+        ("dir Command",     os.path.join(MOD_DIR, "dir")),
+        ("setime Command",  os.path.join(MOD_DIR, "setime")),
+        ("date Command",    os.path.join(MOD_DIR, "date")),
+        ("stop Command",    os.path.join(MOD_DIR, "stop")),
+    ]),
+    # Slot 5 ($A000..$BFFF): SCF, drivers, shell & commands abutting $C000
+    (0xA000, 0xC000, [
+        ("SCF Manager",     os.path.join(MOD_DIR, "scf")),
+        ("ACIA Driver",     os.path.join(MOD_DIR, "sc6850")),
+        ("Clock Driver",    os.path.join(MOD_DIR, "clock")),
+        ("Term Descriptor", os.path.join(MOD_DIR, "term")),
+        ("Shell Command",   os.path.join(MOD_DIR, "shell_21")),
+        ("mfree Command",   os.path.join(MOD_DIR, "mfree")),
+        ("free Command",    os.path.join(MOD_DIR, "free")),
+        ("procs Command",   os.path.join(MOD_DIR, "procs")),
+        ("mdir Command",    os.path.join(MOD_DIR, "mdir")),
+    ]),
+    # Slot 6 ($C000..$DFFF): Storage subsystem abutting $E000 (ioman placed highest in Slot 6)
+    (0xC000, 0xE000, [
+        ("DD Descriptor",   os.path.join(MOD_DIR, "dd")),
+        ("EmuDsk Driver",   os.path.join(MOD_DIR, "emudsk")),
+        ("SysGo Module",    os.path.join(MOD_DIR, "sysgo")),
+        ("RBF Manager",     os.path.join(MOD_DIR, "rbf")),
+        ("I/O Manager",     os.path.join(MOD_DIR, "ioman")),
+    ]),
+    # Slot 7 lower ($E000..$EE00): init & krnp2 abutting $EE00 (krnp2 placed highest in memory)
+    (0xE000, KRN_START_ADDR, [
+        ("Configuration",   os.path.join(MOD_DIR, "init")),
+        ("Kernel (part 2)", os.path.join(MOD_DIR, "krnp2")),
+    ]),
 ]
 
 output_img = os.path.join(SCRIPT_DIR, "deep65280.img")
@@ -45,42 +57,39 @@ img = bytearray(IMG_SIZE)
 print(f"{'Role':<18} {'File':<25} {'Addr':<8} {'Size':<8} {'Name':<10} {'Exec':<8}")
 print("-" * 80)
 
-# 1. Place pre-loaded modules in Slots 1..6 ($2000..$DFFF)
-# Ensure no module crosses an 8KB slot boundary.
-current_addr = START_ADDR
+# 1. Place pre-loaded modules in Slots 4..7 packed against top of each slot
+for slot_start, slot_end, mod_list in SLOT_GROUPS:
+    mod_data = []
+    for role, path in mod_list:
+        with open(path, "rb") as f:
+            data = f.read()
+        assert data[0] == 0x87 and data[1] == 0xCD, f"Invalid sync bytes in {path}"
+        mod_size = (data[2] << 8) | data[3]
+        assert mod_size == len(data), f"Size mismatch in {path}: header says {mod_size}, got {len(data)}"
+        mod_data.append((role, path, data))
 
-for role, path in MOD_PATHS:
-    with open(path, "rb") as f:
-        data = f.read()
+    total_slot_size = sum(len(d) for _, _, d in mod_data)
+    curr_addr = slot_end - total_slot_size
+    assert curr_addr >= slot_start, f"Slot overflow: {total_slot_size} > {slot_end - slot_start} for slot ending at ${slot_end:04X}"
 
-    assert data[0] == 0x87 and data[1] == 0xCD, f"Invalid sync bytes in {path}"
-    mod_size = (data[2] << 8) | data[3]
-    assert mod_size == len(data), f"Size mismatch in {path}: header says {mod_size}, got {len(data)}"
+    for role, path, data in mod_data:
+        name_offset = (data[4] << 8) | data[5]
+        name_bytes = bytearray()
+        p = name_offset
+        while p < len(data):
+            b = data[p]
+            p += 1
+            name_bytes.append(b & 0x7F)
+            if b & 0x80:
+                break
+        name = name_bytes.decode('ascii', errors='replace')
+        exec_offset = (data[9] << 8) | data[10]
 
-    # If module would cross an 8KB slot boundary, advance to start of next slot
-    slot_curr = current_addr // SLOT_SIZE
-    slot_end = (current_addr + len(data) - 1) // SLOT_SIZE
-    if slot_curr != slot_end:
-        current_addr = slot_end * SLOT_SIZE
+        print(f"{role:<18} {os.path.basename(path):<25} ${curr_addr:04X}   ${len(data):04X} ({len(data):<5}) {name:<10} ${exec_offset:04X}")
 
-    assert current_addr + len(data) <= MAX_MOD_ADDR, f"Modules overflow slot 6: {current_addr + len(data):04X} > {MAX_MOD_ADDR:04X}"
-
-    name_offset = (data[4] << 8) | data[5]
-    name_bytes = bytearray()
-    p = name_offset
-    while p < len(data):
-        b = data[p]
-        p += 1
-        name_bytes.append(b & 0x7F)
-        if b & 0x80:
-            break
-    name = name_bytes.decode('ascii', errors='replace')
-    exec_offset = (data[9] << 8) | data[10]
-
-    print(f"{role:<18} {os.path.basename(path):<25} ${current_addr:04X}   ${len(data):04X} ({len(data):<5}) {name:<10} ${exec_offset:04X}")
-
-    img[current_addr:current_addr + len(data)] = data
-    current_addr += len(data)
+        img[curr_addr:curr_addr + len(data)] = data
+        curr_addr += len(data)
+    assert curr_addr == slot_end, f"Address mismatch: expected ${slot_end:04X}, got ${curr_addr:04X}"
 
 # 2. Place Kernel in Slot 7 ($EE00..$FEFF)
 with open(KRN_PATH, "rb") as f:
@@ -94,8 +103,9 @@ krn_exec = KRN_START_ADDR + krn_exec_offset
 print(f"{'Kernel (part 1)':<18} {'krn':<25} ${KRN_START_ADDR:04X}   ${len(krn_data):04X} ({len(krn_data):<5}) {'Krn':<10} ${krn_exec_offset:04X}")
 print("-" * 80)
 print(f"Slot 0 ($0000..$1FFF): System globals, DP, stack (zeroed)")
-print(f"Slots 1..6 ($2000..$DFFF): Preloaded modules (used up to ${current_addr:04X})")
-print(f"Slot 7 ($E000..$FFFF): Kernel at ${KRN_START_ADDR:04X}, size ${len(krn_data):04X}, ends at ${KRN_START_ADDR + len(krn_data):04X}")
+print(f"Slots 1..3 ($2000..$7FFF) + lower Slot 4: Free dynamic RAM (31KB)")
+print(f"Slots 4..7 ($99DB..$EDFF): Preloaded modules (high-packed, abutting $EE00)")
+print(f"Slot 7 ($EE00..$FFFF): Kernel at ${KRN_START_ADDR:04X}, size ${len(krn_data):04X}, ends at ${KRN_START_ADDR + len(krn_data):04X}")
 
 assert KRN_START_ADDR + len(krn_data) == 0xFF00, f"Kernel must end exactly at $FF00, got ${KRN_START_ADDR + len(krn_data):04X}"
 img[KRN_START_ADDR:KRN_START_ADDR + len(krn_data)] = krn_data

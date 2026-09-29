@@ -80,6 +80,7 @@ print(f"Total module space used: ${START_ADDR:04X}..${current_addr:04X} ({curren
 print(f"Free RAM before I/O: ${current_addr:04X}..$FEFF ({0xFF00 - current_addr} bytes)")
 
 # Top-page CPU Vectors ($FFF0..$FFFF)
+# In Level 1, vectors point to trampolines copied to low RAM ($0100..$010F)
 img[0xFFF0:0xFFF2] = (0x0100).to_bytes(2, 'big') # TRAP
 img[0xFFF2:0xFFF4] = (0x0100).to_bytes(2, 'big') # SWI3
 img[0xFFF4:0xFFF6] = (0x0103).to_bytes(2, 'big') # SWI2
