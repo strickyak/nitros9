@@ -301,7 +301,99 @@ The existing build relies on a variety of host tools and ToolShed utilities. Alm
 
 ---
 
-## 5. The Assembler Gap: `lwasm` vs. Native `asm`
+## 5. Build Automation: Microware Make vs. Unix / GNU Make
+
+While `make` is referenced in [`level2/sys/make.hp`](file:///home/strick/modoc/coco-shelf/nitros9/level2/sys/make.hp) and was distributed as part of the Microware OS-9 C Compiler and development package, evaluating its suitability for self-hosting requires understanding how its syntax and feature set compare to Unix and GNU Make.
+
+### 5.1 Syntax Comparison
+
+Microware Make shares the basic mental model and structure of classic Unix Make (Version 7 / System V Make), but introduces several syntax distinctions tailored for the OS-9 environment:
+
+| Syntax Element | Unix / GNU Make | Microware OS-9 Make | Impact / Compatibility |
+| :--- | :--- | :--- | :--- |
+| **Rule Header** | `target: dep1 dep2` | `target: dep1 dep2` | **Compatible**: Identical target-dependency syntax. |
+| **Command Indentation** | **Strict ASCII TAB (`\t`)** only | **Spaces or Tabs** | **More forgiving**: Microware Make accepts leading spaces or tabs. It avoids Unix Make's infamous `missing separator` errors. |
+| **Continuation Lines** | `\` at end of line | Space followed by `\` | Continued command lines must begin with whitespace (space or tab). |
+| **Comments** | `# Comment` | `# Comment` | **Compatible**: Standard hash-to-EOL comments. |
+| **Macro Definition** | `MACRO = value` | `MACRO = value` | **Compatible**: Internal macros can be assigned and overridden via CLI (`make MACRO=val`). |
+| **Macro Expansion** | `$(MACRO)` or `${MACRO}` | `$(MACRO)` or `$M` | Supports single-character `$M` or parenthesized `$(MACRO)`. |
+| **Shell Execution** | `/bin/sh -c` | OS-9 `shell` (`Sys$Fork`) | Commands execute via the native OS-9 shell; path separators (`/`), redirection (`<`, `>`), and execution directories apply. |
+
+### 5.2 Supported Features
+
+#### A. Three-Pass Dependency Engine
+Microware Make evaluates build rules using three sequential passes:
+1. **Pass 1 (Parse):** Reads the makefile from top to bottom, parses macros and rules, and populates an internal dependency table.
+2. **Pass 2 (Implicit Resolution):** Resolves implicit rules (suffix transformations) for targets lacking explicit recipes.
+3. **Pass 3 (Execution):** Traverses target dates, compares timestamps against prerequisites, and invokes commands for outdated targets.
+
+#### B. Automatic / Internal Variables
+In recipe commands, Microware Make expands the following automatic variables:
+- **`$@`**: The full filename of the current target being built.
+- **`$*`**: The base name (stem) of the target without its suffix.
+- **`$?`**: The list of prerequisite files newer than the target.
+- **`$<`**: In suffix rules, the source prerequisite file causing the rebuild.
+
+#### C. Built-in Suffix Rules
+Microware Make provides built-in implicit rules tailored to the standard Microware OS-9 development toolchain:
+- **`.c.r`**: Compiles C source files (`.c`) to relocatable object files (`.r`) using `cc`.
+- **`.a.r`**: Assembles assembly source files (`.a`) to relocatable object files (`.r`) using `rma`.
+- **`.r`**: Links relocatable object files (`.r`) into an executable OS-9 memory module using `rlink`.
+*(Note: Final executable OS-9 memory modules traditionally have no file extension).*
+Built-in rules can be bypassed completely using the `-b` flag.
+
+#### D. Command-Line Options
+From the OS-9 Level 2 help documentation ([`level2/sys/make.hp`](file:///home/strick/modoc/coco-shelf/nitros9/level2/sys/make.hp)):
+```text
+Syntax: Make [<opts>] [<target file>] [<macros>]
+Usage : Maintain, Update and Regenerate Groups of Programs
+Opts  :
+  -b  = don't use built in rules
+  -d  = debug mode, print out the file dates in makefile
+  -f=<xxx> use <xxx> as makefile (default: makefile)
+  -i  = ignore errors on commands, keep going
+  -n  = don't execute commands, just print them out
+  -s  = silent mode, execute commands without echoing them
+  -t  = update the dates without executing the commands
+  -u  = do the make whether it needs it or not (unconditional)
+  -z[=<path>] get list of files to make from stdin or path
+```
+Notable options:
+- **`-u` (Unconditional)**: Forces rebuilding of all targets regardless of timestamps (equivalent to GNU Make `-B` / `--always-make`).
+- **`-z[=<path>]`**: Reads the target list directly from standard input or a file list, allowing programmatic pipelining of build jobs from other OS-9 utilities.
+
+### 5.3 Critical Differences and Limitations Compared to GNU Make
+
+#### 1. The 1-Minute Timestamp Resolution Limitation (RBF Filesystem)
+The OS-9 Random Block File Manager (RBF) stores file modification timestamps in directory and file descriptor entries with **one-minute granularity** (5 bytes: Year, Month, Day, Hour, Minute; seconds are not recorded).
+- **The Consequence**: If a source file is edited, compiled to an intermediate object, and linked within the same 60-second window, the source and target will share the **exact same modification minute**.
+- **Make's Behavior**: To avoid missing updates, Microware Make treats **equal timestamps as out-of-date** (`prerequisite_time >= target_time`).
+- In fast multi-step compilation pipelines (especially under high-speed emulation on `gep9`), this can cause cascading rebuilds of targets that were just generated, unless deliberate delays (`sleep 60` or minute-boundary synchronization) occur.
+
+#### 2. Absence of GNU Make Extensions
+Microware Make corresponds to classic 1980s POSIX / Version 7 Make and lacks modern GNU Make features:
+- **No Functions**: No `$(addprefix ...)`, `$(wildcard ...)`, `$(patsubst ...)`, `$(shell ...)`.
+- **No Pattern Rules**: Does not support `%` matching (e.g., `%.o: %.c`). Only suffix rules are supported.
+- **No File Inclusion**: Does not support the `include filename` directive.
+- **No Conditional Logic**: Does not support `ifeq`, `ifneq`, `ifdef`, `else`, `endif`.
+- **No Order-Only Prerequisites**: Syntax like `target: dep | order_dep` will fail.
+- **No Target-Specific Variables**: Syntax like `$(MODDIR)/term: AFLAGS += ...` is unsupported.
+
+### 5.4 Implications for Native NitrOS-9 Self-Hosting
+
+NitrOS-9's current build system ([`rules.mak`](file:///home/strick/modoc/coco-shelf/nitros9/rules.mak), [`recipes/deep65280/deep65280.mak`](file:///home/strick/modoc/coco-shelf/nitros9/recipes/deep65280/deep65280.mak)) relies heavily on GNU Make-specific constructs:
+- `include ../rules.mak` and `-include recipe.mak`
+- `ALL_MODS = $(addprefix $(MODDIR)/, $(KERNEL) $(CONFIG) ...)`
+- Order-only directory dependencies: `$(MODDIR)/term: ... | $(MODDIR)`
+- Target-specific flags: `$(MODDIR)/dd: AFLAGS += -DDD=1 -DDNum=0`
+
+Therefore, existing makefiles cannot be executed directly by Microware Make. For native self-hosting, two practical paths exist:
+1. **Simplified Flat Makefiles**: Generate or maintain a set of non-recursive, flat makefiles where all targets, macros, and commands are explicitly spelled out without GNU functions.
+2. **OS-9 Shell Script Procedures (`build_all`)**: Because regenerating the OS-9 kernel and command disks is a deterministic, linear sequence of operations, invoking an OS-9 shell procedure (`sh build_all`) or a lightweight Picol script avoids Make's timestamp resolution pitfalls, consumes less memory within the 64 KB user task space, and eliminates the need to maintain duplicate makefile architectures.
+
+---
+
+## 6. The Assembler Gap: `lwasm` vs. Native `asm`
 
 While file manipulation utilities are fully solved by existing native tools, the **assembler** represents the primary technical difference between cross-hosted builds and native builds.
 
@@ -381,7 +473,7 @@ Because `asm.asm` source is in-tree ([`level1/cmds/asm.asm`](file:///home/strick
 
 ---
 
-## 6. Native Disk Generation & Bootstrapping Architecture
+## 7. Native Disk Generation & Bootstrapping Architecture
 
 In the cross-development environment, `build_dsk.sh` uses ToolShed's `os9` utility on the host. Under native NitrOS-9, disk generation is performed directly using the OS-9 storage subsystem.
 
@@ -460,7 +552,7 @@ echo "Target disk /d1 populated successfully."
 
 ---
 
-## 7. Phased Implementation Roadmap
+## 8. Phased Implementation Roadmap
 
 To achieve native self-hosting methodically without breaking working environments, a four-phase rollout is recommended:
 
@@ -502,10 +594,11 @@ flowchart TD
 
 ---
 
-## 8. Conclusion & Recommendations
+## 9. Conclusion & Recommendations
 
 1. **Python Elimination**: Replacing Python is straightforward. `build_img.py` performs no complex math or dependencies; its logic maps directly to **Picol** or **Tcl 6.7** when structured using streamed file copying (`seek` + `bcopy`) to respect the 64 KB process memory limits of OS-9 Level 2.
-2. **File & Disk Tooling**: The NitrOS-9 codebase already possesses complete native equivalents for every ToolShed and Unix file utility (`copy`, `del`, `makdir`, `merge`, `attr`, `format`, `padrom`, `cobbler`).
-3. **Primary Investment Area**: The only substantial engineering effort required for full self-hosting is the **assembler**—specifically adding command-line symbol definitions (`-D`) and expanding symbol name length in `asm.asm` (or porting a focused subset of `lwasm`).
+2. **Build Orchestration**: Microware Make is viable for flat, classic makefiles, but its 1-minute RBF timestamp resolution and lack of GNU Make functions mean that native OS-9 shell procedures (`sh build_all`) or a Picol orchestration script are simpler and more dependable for system regeneration.
+3. **File & Disk Tooling**: The NitrOS-9 codebase already possesses complete native equivalents for every ToolShed and Unix file utility (`copy`, `del`, `makdir`, `merge`, `attr`, `format`, `padrom`, `cobbler`).
+4. **Primary Investment Area**: The only substantial engineering effort required for full self-hosting is the **assembler**—specifically adding command-line symbol definitions (`-D`) and expanding symbol name length in `asm.asm` (or porting a focused subset of `lwasm`).
 
 With 512 KB–2 MB of physical RAM and high-speed `EMUDSK` block storage, `deep65280` on `gep9` provides an ideal platform to realize complete, native self-hosting for NitrOS-9.
