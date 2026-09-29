@@ -117,7 +117,7 @@ ShellPL             equ       *-ShellPrm
 * If no RTC is available, then the soft clock starts at January 1 of the new year.
 DefTime             fcb       85,12,31,23,59,59
 
-                  IFEQ    atari+corsham+wildbits+picothing+flat65280
+                  IFEQ    atari+corsham+wildbits+picothing+flat65280+deep65280
                     ifeq      Level-1
 * BASIC reset code (CoCo port only)
 BasicRst            fcb       $55
@@ -210,7 +210,7 @@ SignOn
 
 L0125               equ       *
                     pshs      u,y
-                  IFEQ    atari+corsham+wildbits+picothing+flat65280
+                  IFEQ    atari+corsham+wildbits+picothing+flat65280+deep65280
                     ifeq      Level-1
 * Setup BASIC code (CoCo port only)
                     leax      >BasicRst,pcr
@@ -249,7 +249,7 @@ L0151               lda       b,y
 
                     ifeq      ROM
 * Fork shell startup here
-                  IFEQ    atari+corsham+wildbits+picothing+flat65280
+                  IFEQ    atari+corsham+wildbits+picothing+flat65280+deep65280
 * Added 12/14/03: If SHIFT is held down, startup is not run (CoCo only)
                     lda       #$01                standard output
                     ldb       #SS.KySns

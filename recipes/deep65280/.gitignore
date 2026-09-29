@@ -1,0 +1,7 @@
+.mods/
+.obj/
+buildinfo
+*.list
+*.map
+*.img
+*.dsk

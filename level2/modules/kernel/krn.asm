@@ -57,8 +57,8 @@ Edition             set       20        ; module Edition
                   IFNE    picothing ; begin conditional assembly for picothing
 Where               equ       $EC00     ; picothing
                   ELSE
-                  IFNE    wildbits ; begin conditional assembly for wildbits
-Where               equ       $EE00     ; wildbits
+                  IFNE    wildbits+deep65280 ; begin conditional assembly for wildbits/deep65280
+Where               equ       $EE00     ; wildbits/deep65280
                   ELSE
 Where               equ       $F000     ; coCo 3
                   ENDC
@@ -80,6 +80,9 @@ MName               fcs       /Krn/
                     fcc       /www.nitros9.org /
                     fcc       /www/
                   ELSE
+                  IFNE    deep65280 ; begin conditional assembly for deep65280
+                    fill      $39,469   ; pad so SWIStack lands at $FEDF
+                  ELSE
                   IFNE    wildbits ; begin conditional assembly for wildbits
                     fcc       /www.nitros9.org /
                     fcc       /www.nitros9.org /
@@ -91,6 +94,7 @@ MName               fcs       /Krn/
                     fcc       /www.nitros9.org /
                   ELSE
                     fcc       /www.nitr/
+                  ENDC
                   ENDC
                   ENDC
 
@@ -171,7 +175,7 @@ forever@            bra       forever@  ; simply branch forever
                   ENDC
 *]]] Wildbits PORT
 
-                  IFNE    picothing ; begin conditional assembly for picothing
+                  IFNE    picothing+deep65280 ; begin conditional assembly for picothing/deep65280
 * PicoBtBug - boot debug character output to virtual MC6850 ACIA
 *
 * Called via D.BtBug (set up below).  Character to print is in A.
@@ -221,6 +225,8 @@ cr@                 ldb       ACIA.Ctrl read ACIA status register
                     bitb      #%00000010 transmit data register empty?
                     beq       cr@       no, keep polling
                     sta       ACIA.Data transmit the character
+                    ldb       #$FD
+                    stb       $FF87     stop gep9
 cr2@                bra       cr2@      loop forever
                   ENDC
 
@@ -299,8 +305,8 @@ done@               ldx       #$0000    ; start clearing at this address
                     std       <D.CCStk  ; set pointer to top of global memory to $2000
                     lda       #$01      ; set task user table to $0100
                   ELSE
-                  IFNE    picothing ; begin conditional assembly for picothing
-                    ldx       #$0000    picothing has no REL to clear page 0
+                  IFNE    picothing+deep65280 ; begin conditional assembly for picothing/deep65280
+                    ldx       #$0000    picothing/deep65280 has no REL to clear page 0
                     ldy       #$2000    clear all of pages 0 and 1
                   ELSE
                     ldx       #$100     ; start clearing at this address
@@ -334,7 +340,7 @@ l@                  std       ,x++      ; now clear memory 16 bits at a time
                   ENDC
 *]]] Wildbits PORT
 
-                  IFNE    picothing ; begin conditional assembly for picothing
+                  IFNE    picothing+deep65280 ; begin conditional assembly for picothing/deep65280
 * Enable D.BtBug - boot debug prints on the ACIA console.
 * Change $7E to $39 (RTS) and comment leax/stx to disable.
                     pshs      b
@@ -346,8 +352,10 @@ l@                  std       ,x++      ; now clear memory 16 bits at a time
                     stb       <D.Crash  store JMP opcode at D.Crash
                     leax      PicoCrash,pcr address of crash handler
                     stx       <D.Crash+1 store 2-byte target address
+                  IFNE    picothing
                     ldb       #$01      protect vector area from stray writes
                     stb       >WatchCtl arm watchpoint: $FFF0-$FFFF becomes read-only
+                  ENDC
                     puls      b
                   ENDC
 
@@ -417,8 +425,8 @@ l@                  std       ,x++      ; now clear memory 16 bits at a time
                     leay      >DisTable,pcr ; point to the table of absolute vector addresses
                   ELSE
 *]]] Wildbits PORT
-                  IFNE    picothing ; begin conditional assembly for picothing
-                    leay      >DisTable,pcr ; picothing islands push DisTable past 8-bit pcr range
+                  IFNE    picothing+deep65280 ; begin conditional assembly for picothing/deep65280
+                    leay      >DisTable,pcr ; islands push DisTable past 8-bit pcr range
                   ELSE
                     leay      <DisTable,pcr ; point to the table of absolute vector addresses
                   ENDC
@@ -505,6 +513,18 @@ l@                  stu       ,x++      ; set all IRQ vectors to go to vectors f
                     sta       P$Age,x   ; and the age
                     leax      <P$DATImg,x ; point to the DAT image
                     stx       <D.SysDAT ; save it as a pointer in page 0
+                  IFNE    deep65280
+                    ldd       #SysBlock ; $0038
+                    std       ,x++      ; initialize slot 0 to SysBlock ($38)
+                    ldb       #$39      ; initialize slots 1..6 to $39..$3E
+dp_img@             clra
+                    std       ,x++
+                    incb
+                    cmpb      #$3F
+                    bne       dp_img@
+                    ldu       #KrnBlk   ; get block where kernel resides ($3F)
+                    stu       ,x        ; save in slot 7
+                  ELSE
                   IFNE    H6309   ; begin conditional assembly for H6309
 * actually, since block 0 is tfm'd to be zero, we can skip the next 2 lines
                     clrd                ; D = 0
@@ -536,6 +556,7 @@ l@                  stu       ,x++      ; store it
                   IFEQ    wildbits ; begin conditional assembly for wildbits
                     ldu       #KrnBlk   ; get the block where the kernel resides
                     stu       ,x        ; and save it in the last 8K slot
+                  ENDC
                   ENDC
 
                     ldx       <D.Tasks  ; point to the task user table
@@ -661,6 +682,51 @@ l@                  sta       b,x       ; store the flag in the appropriate offs
                     ldx       <D.BtPtr  ; get start address of the bootfile in memory
                     ldd       <D.BtSz   ; get MSB of bootfile size
                   ELSE
+                  IFNE    deep65280
+* 512KB RAM = 64 8KB blocks ($00..$3F). Blocks $00..$37 are free user RAM (0).
+* Blocks $38..$3F are OS RAM (RAMinUse).
+                    ldx       <D.BlkMap ; pointer to 8KB block map
+                    ldb       #$40      ; 64 blocks = 512KB
+                    stb       <D.MemSz  ; save # of 8KB memory blocks
+                    ldd       #$0240    ; end of block map pointer
+                    std       <D.BlkMap+2 ; save block map end pointer
+* Mark blocks $38..$3F as RAMinUse
+                    leax      $38,x     ; point to block $38
+                    lda       #RAMinUse
+                    ldb       #8        ; 8 blocks ($38..$3F)
+dp_blk@             sta       ,x+
+                    decb
+                    bne       dp_blk@
+* Mark pages $20..$7F as RAMinUse (preloaded modules)
+* Leave pages $80..$ED free (0) for dynamic system allocation (F$SRqMem)
+* Mark pages $EE..$FF as RAMinUse/NotRAM (Kernel and I/O)
+                    ldx       <D.SysMem
+                    leax      $20,x     ; page $20 ($2000)
+                    lda       #RAMinUse
+                    ldb       #$60      ; 96 pages ($20..$7F) for preloaded modules
+dp_smap1@           sta       ,x+
+                    decb
+                    bne       dp_smap1@
+                    leax      $6E,x     ; skip free system pages $80..$ED (110 pages)
+                    ldb       #$12      ; 18 pages ($EE..$FF) for Krn & I/O
+dp_smap2@           sta       ,x+
+                    decb
+                    bne       dp_smap2@
+                    lda       #NotRAM
+                    sta       -1,x      ; page $FF is I/O
+* Validate preloaded modules slot by slot (slots 1 through 7)
+                    ldx       #$2000    ; start of slot 1
+dp_vloop@           pshs      x
+                    ldd       #$2000    ; 8KB per slot
+                    cmpx      #$E000    ; is this slot 7?
+                    bne       dp_vnot7@
+                    ldd       #$1E00    ; slot 7 only up to $FE00
+dp_vnot7@           lbsr      I.VBlock  ; validate all modules in this slot
+                    puls      x
+                    leax      $2000,x
+                    cmpx      #$0000    ; wrapped around?
+                    bne       dp_vloop@
+                  ELSE
 *]]] Wildbits PORT
 ********************************************************************
 * Determine how many 8KB blocks of physical memory are available and
@@ -742,13 +808,14 @@ Mc09KrnStart
                   ELSE
                     lda       #18       ; size of the boot track is $1800
                   ENDC
-                  ENDC
 
 * Verify the modules in the boot area and update/build a module index.
                     lbsr      I.VBlock  ; perform module validation
                     bsr       KrnSystemMemoryMap ; then mark the system map
+                  ENDC
+                  ENDC
 
-                  IFEQ    wildbits ; begin conditional assembly for wildbits
+                  IFEQ    wildbits+deep65280 ; skip F$Boot on wildbits and deep65280
 * BGP - Load bootfile and link to init. We no longer try to link to init first and then
 * call F$Boot. This saves bytes.
                     os9       F$Boot    ; load bootfile here +BGP+

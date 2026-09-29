@@ -41,7 +41,12 @@ lmap@               equ       *         ; remap path for an ordinary block
                   ENDC
                     stb       >DAT.Regs ; map block into $0000-$1FFF
                     ldb       ,x        ; load B from ,x
+                  IFNE    deep65280
+                    lda       #SysBlock
+                    sta       >DAT.Regs ; restore mapping at $0000-$1FFF
+                  ELSE
                     clr       >DAT.Regs ; restore mapping at $0000-$1FFF
+                  ENDC
                     endif
 ldone@              puls      cc,a,x,u  ; restore cc,a,x,u from the stack
 
@@ -106,6 +111,11 @@ smap@               equ       *         ; remap path for an ordinary block
                   ENDC
                     stb       >DAT.Regs ; map selected block into $0000-$1FFF
                     sta       ,x        ; store A at ,x
+                  IFNE    deep65280
+                    lda       #SysBlock
+                    sta       >DAT.Regs ; restore mapping at $0000-$1FFF
+                  ELSE
                     clr       >DAT.Regs ; restore mapping at $0000-$1FFF
+                  ENDC
                     endif
 sdone@              puls      cc,d,x,u,pc ; restore cc,d,x,u,pc from the stack

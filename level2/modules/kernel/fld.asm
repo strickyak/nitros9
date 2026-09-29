@@ -39,6 +39,9 @@ mblk@               equ       *         ; remap path for an ordinary block
                   ENDC
                     sta       >DAT.Regs ; map block into $0000-$1FFF
                     lda       ,x        ; get byte
+                  IFNE    deep65280
+                    ldb       #SysBlock ; restore system block ($38)
+                  ENDC
                     stb       >DAT.Regs ; map block 0 into $0000-$1FFF
                   ENDC
                     puls      pc,cc     ; get interrupt status/(or turn on) & return
@@ -60,6 +63,9 @@ lax@                equ       *         ; remap path for an ordinary block
                   ENDC
                     sta       >DAT.Regs ; map in MMU block into slot 0
                     lda       ,x+       ; get byte
+                  IFNE    deep65280
+                    ldb       #SysBlock ; restore system block ($38)
+                  ENDC
                     stb       >DAT.Regs ; map MMU block #0 back
                     puls      b,cc      ; restore b,cc from the stack
                     bra       AdjBlk0   ; branch unconditionally to AdjBlk0
@@ -121,7 +127,11 @@ fldt@               ldu       >DAT.Regs ; save actual hardware slots 0 and 1
                     stu       >DAT.Regs ; restore original hardware slots
                   ELSE
                     ldu       <D.SysDAT ; get sys DAT Image ptr
+                  IFNE    deep65280
+                    lda       #SysBlock ; system block 0 is SysBlock ($38)
+                  ELSE
                     clra                ; system block 0 =0 always
+                  ENDC
                     ldb       3,u       ; get MMU block #1
                     tfr       d,u       ; make U=blocks to re-map in once done
                     lda       1,y       ; get MMU block #0
