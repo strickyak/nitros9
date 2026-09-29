@@ -81,7 +81,7 @@ MName               fcs       /Krn/
                     fcc       /www/
                   ELSE
                   IFNE    deep65280 ; begin conditional assembly for deep65280
-                    fill      $39,479   ; pad so SWIStack lands at $FEDF
+                    fill      $39,415   ; pad so SWIStack lands at $FEDF
                   ELSE
                   IFNE    wildbits ; begin conditional assembly for wildbits
                     fcc       /www.nitros9.org /
@@ -683,22 +683,81 @@ l@                  sta       b,x       ; store the flag in the appropriate offs
                     ldd       <D.BtSz   ; get MSB of bootfile size
                   ELSE
                   IFNE    deep65280
-* 512KB RAM = 64 8KB blocks ($00..$3F). Blocks $01..$38 are free user RAM (0).
-* Block $00 and blocks $39..$3F are OS RAM (RAMinUse).
-                    ldx       <D.BlkMap ; pointer to 8KB block map
-                    ldb       #$40      ; 64 blocks = 512KB
-                    stb       <D.MemSz  ; save # of 8KB memory blocks
-                    ldd       #$0240    ; end of block map pointer
-                    std       <D.BlkMap+2 ; save block map end pointer
-* Mark block $00 as RAMinUse
-                    lda       #RAMinUse
-                    sta       ,x        ; mark block 0 as in use
-* Mark blocks $39..$3F as RAMinUse
-                    leax      $39,x     ; point to block $39
-                    ldb       #7        ; 7 blocks ($39..$3F)
-dp_blk@             sta       ,x+
+* Sizing physical memory: 128KB, 512KB, or 2MB.
+* Probe powers of 2 (16, 32, 64, 128, 256) by checking if mapping block into
+* slot 5 ghosts to block 0.
+                    ldx       <D.BlkMap ; X = $0200
+                    clr       ,x        ; ensure block 0 entry is 0 before probe
+                    ldd       #$0008    ; initial block test value
+dp_probe            aslb                ; B <= 1
+                    rola                ; A <= 1
+                    stb       >DAT.Regs+5 ; map block B into slot 5 ($A000-$BFFF)
+                    pshs      a         ; save A
+                    lda       #$01      ; test value
+                    sta       >-$6000,x ; write to $A200 (slot 5 offset $200)
+                    cmpa      ,x        ; check if it ghosted to $0200 (block 0)
+                    puls      a
+                    bne       dp_probe  ; keep looping until ghost detected
+
+* D now has the detected block count:
+* $0010 = 128KB (16 blocks)
+* $0040 = 512KB (64 blocks)
+* $0100 = 2MB   (256 blocks)
+                    stb       <D.MemSz  ; save # of 8KB blocks ($10, $40, $00)
+
+* Restore slot 5 to SCF module block ($3D)
+                    pshs      d         ; preserve detected memory size D
+                    lda       #$3D
+                    sta       >DAT.Regs+5
+                    puls      d         ; restore detected memory size D
+
+* At exit of probe, location ,x ($0200, block 0) was marked 1 = RAMinUse by ghost write.
+
+* Configure D.BlkMap+2 and mark block map entries based on memory size
+                    cmpd      #$0010    ; is it 128KB?
+                    bne       dp_not128
+
+* --- 128KB Configuration ---
+* Blocks $30..$3F are physical blocks 0..15.
+* Block $00 is RAMinUse (used by slot 0).
+* Blocks $01..$30 are aliases to blocks $1..$15,$0 and must be marked NotRAM.
+* Blocks $31..$38 are free user RAM (8 blocks = 64KB).
+* Blocks $39..$3F are OS RAM (7 blocks for slots 1..7).
+                    ldd       #$0240    ; 64 block entries ($00..$3F)
+                    std       <D.BlkMap+2
+* Mark blocks $01..$30 as NotRAM
+                    lda       #NotRAM
+                    ldb       #$30      ; 48 blocks ($01..$30)
+dp_128_nr           sta       b,x
                     decb
-                    bne       dp_blk@
+                    bne       dp_128_nr
+                    bra       dp_mark_sys
+
+dp_not128           cmpd      #$0100    ; is it 2MB?
+                    beq       dp_is2m
+
+* --- 512KB Configuration ---
+* Blocks $00..$3F (64 blocks).
+* Block $00 is RAMinUse. Blocks $01..$38 are free (already 0).
+* Blocks $39..$3F are OS RAM.
+                    ldd       #$0240
+                    std       <D.BlkMap+2
+                    bra       dp_mark_sys
+
+* --- 2MB Configuration ---
+* Blocks $00..$FF (256 blocks).
+* Block $00 is RAMinUse. Blocks $01..$38 and $40..$FF are free (already 0).
+* Blocks $39..$3F are OS RAM.
+dp_is2m             ldd       #$0300
+                    std       <D.BlkMap+2
+
+* Mark blocks $39..$3F as RAMinUse for all sizes
+dp_mark_sys         leax      $39,x     ; point to block $39
+                    lda       #RAMinUse
+                    ldb       #7        ; 7 blocks ($39..$3F)
+dp_blk              sta       ,x+
+                    decb
+                    bne       dp_blk
 * Mark pages $99..$FF as RAMinUse/NotRAM (preloaded modules in slots 4..7, Krn & I/O)
 * Leave pages $20..$98 free (0) for dynamic system allocation (F$SRqMem)
                     ldx       <D.SysMem
