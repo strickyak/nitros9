@@ -97,7 +97,7 @@ DAT.BMSz            EQU       $40                 Memory Block Map size (64 byte
 DAT.WrPr            EQU       0                   no write protect
 DAT.WrEn            EQU       0                   no write enable
 SysTask             EQU       0                   System Task number
-SysBlock            EQU       $38                 System globals block (physical page $38)
+SysBlock            EQU       $00                 System globals block (physical block $00)
 IOBlock             EQU       $3F
 ROMBlock            EQU       $3F
 IOAddr              EQU       $7F

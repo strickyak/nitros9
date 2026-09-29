@@ -81,7 +81,7 @@ MName               fcs       /Krn/
                     fcc       /www/
                   ELSE
                   IFNE    deep65280 ; begin conditional assembly for deep65280
-                    fill      $39,481   ; pad so SWIStack lands at $FEDF
+                    fill      $39,479   ; pad so SWIStack lands at $FEDF
                   ELSE
                   IFNE    wildbits ; begin conditional assembly for wildbits
                     fcc       /www.nitros9.org /
@@ -683,17 +683,19 @@ l@                  sta       b,x       ; store the flag in the appropriate offs
                     ldd       <D.BtSz   ; get MSB of bootfile size
                   ELSE
                   IFNE    deep65280
-* 512KB RAM = 64 8KB blocks ($00..$3F). Blocks $00..$37 are free user RAM (0).
-* Blocks $38..$3F are OS RAM (RAMinUse).
+* 512KB RAM = 64 8KB blocks ($00..$3F). Blocks $01..$38 are free user RAM (0).
+* Block $00 and blocks $39..$3F are OS RAM (RAMinUse).
                     ldx       <D.BlkMap ; pointer to 8KB block map
                     ldb       #$40      ; 64 blocks = 512KB
                     stb       <D.MemSz  ; save # of 8KB memory blocks
                     ldd       #$0240    ; end of block map pointer
                     std       <D.BlkMap+2 ; save block map end pointer
-* Mark blocks $38..$3F as RAMinUse
-                    leax      $38,x     ; point to block $38
+* Mark block $00 as RAMinUse
                     lda       #RAMinUse
-                    ldb       #8        ; 8 blocks ($38..$3F)
+                    sta       ,x        ; mark block 0 as in use
+* Mark blocks $39..$3F as RAMinUse
+                    leax      $39,x     ; point to block $39
+                    ldb       #7        ; 7 blocks ($39..$3F)
 dp_blk@             sta       ,x+
                     decb
                     bne       dp_blk@
