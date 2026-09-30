@@ -81,7 +81,11 @@ MName               fcs       /Krn/
                     fcc       /www/
                   ELSE
                   IFNE    deep65280 ; begin conditional assembly for deep65280
+                  IFNE    DEEP_256K
+                    fill      $39,404   ; pad so SWIStack lands at $FEDF
+                  ELSE
                     fill      $39,415   ; pad so SWIStack lands at $FEDF
+                  ENDC
                   ELSE
                   IFNE    wildbits ; begin conditional assembly for wildbits
                     fcc       /www.nitros9.org /
@@ -742,6 +746,15 @@ dp_not128           cmpd      #$0100    ; is it 2MB?
 * Blocks $39..$3F are OS RAM.
                     ldd       #$0240
                     std       <D.BlkMap+2
+                  IFNE    DEEP_256K
+* Mark shadow blocks $10..$2F as NotRAM (32 blocks = 256KB)
+                    lda       #NotRAM
+                    ldb       #$2F
+dp_256_nr           sta       b,x
+                    decb
+                    cmpb      #$0F
+                    bne       dp_256_nr
+                  ENDC
                     bra       dp_mark_sys
 
 * --- 2MB Configuration ---

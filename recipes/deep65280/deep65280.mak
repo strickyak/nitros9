@@ -6,7 +6,12 @@ LEVEL = 2
 include ../rules.mak
 -include recipe.mak
 
+DEEP_256K ?= 1
+ifeq ($(DEEP_256K),1)
+AFLAGS += -I. -I$(L2PD) -I$(L2PMD) -I$(L2MD)/kernel -I$(L1MD)/kernel -I$(L2MD) -I$(L1MD) -Ddeep65280=1 -DDEEP_256K=1
+else
 AFLAGS += -I. -I$(L2PD) -I$(L2PMD) -I$(L2MD)/kernel -I$(L1MD)/kernel -I$(L2MD) -I$(L1MD) -Ddeep65280=1
+endif
 
 MODDIR = .mods
 

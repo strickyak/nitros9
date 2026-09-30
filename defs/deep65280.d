@@ -31,6 +31,12 @@ DEEP65280.D         set       1
 
 deep65280           set       1
 
+* 256KB memory configuration flag (defaults to 0 if not defined)
+                    IFDEF     DEEP_256K
+                    ELSE
+DEEP_256K           set       0
+                    ENDC
+
 * Ticks per second and time slice
                     IFDEF     TkPerSec
                     IFNE      TkPerSec-6
