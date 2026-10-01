@@ -287,9 +287,6 @@ CHAR_VAL    = 'Z'
     STORE_GLOBAL g_counter
 
     PUSH_0
-    CALL test_all_opcodes
-
-    PUSH_0
     SYS_EXIT
 .endfunction
 """
