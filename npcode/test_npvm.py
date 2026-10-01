@@ -350,6 +350,91 @@ def test_verbose_tracing():
     print("  -> Verbose tracing OK.")
 
 
+def test_addr_of_global_and_println():
+    print("Testing ADDR_OF_GLOBAL and PRINTLN with Slice[any]...")
+    src = """
+    .global g_val: scalar
+    .global g_buf: 32
+
+    .function main entry
+        .local pbuf: scalar
+        .local any_buf: scalar
+
+        ; Test ADDR_OF_GLOBAL
+        ADDR_OF_GLOBAL g_val
+        STORE_LOCAL pbuf
+
+        ; Store 1234 into g_val via STORE_FIELD at pbuf
+        LOAD_LOCAL pbuf
+        PUSH_I16 1234
+        STORE_FIELD 0
+
+        ; Verify LOAD_GLOBAL returns 1234
+        LOAD_GLOBAL g_val
+        STORE_GLOBAL g_val
+
+        ; Now test PRINTLN with Slice[any]
+        ; Allocate 8 bytes for two 'any' entries (entry 0: int, entry 1: string)
+        PUSH_I16 8
+        BUF_ALLOC
+        STORE_LOCAL any_buf
+
+        ; Entry 0: BaseAddr = &g_val, TypeStr = "word"
+        LOAD_LOCAL any_buf
+        ADDR_OF_GLOBAL g_val
+        STORE_FIELD 0
+
+        LOAD_LOCAL any_buf
+        PUSH_STR "word"
+        POP
+        POP
+        STORE_FIELD 2
+
+        ; Entry 1: BaseAddr = &g_buf, TypeStr = "string"
+        ; Store "Hello" into g_buf as 3-word slice { text_ptr, 5, 5 }
+        PUSH_STR "Hello"
+        POP
+        POP
+        STORE_LOCAL pbuf  ; text_ptr
+        ADDR_OF_GLOBAL g_buf
+        LOAD_LOCAL pbuf
+        STORE_FIELD 0     ; slice.base
+        ADDR_OF_GLOBAL g_buf
+        PUSH_I16 5
+        STORE_FIELD 2     ; slice.cap
+        ADDR_OF_GLOBAL g_buf
+        PUSH_I16 5
+        STORE_FIELD 4     ; slice.len
+
+        LOAD_LOCAL any_buf
+        ADDR_OF_GLOBAL g_buf
+        STORE_FIELD 4     ; any[1].BaseAddr
+
+        LOAD_LOCAL any_buf
+        PUSH_STR "string"
+        POP
+        POP
+        STORE_FIELD 6     ; any[1].TypeStr
+
+        ; Push Slice[any] { any_buf, 2, 2 }
+        LOAD_LOCAL any_buf
+        PUSH_I16 2
+        PUSH_I16 2
+        PRINTLN
+
+        LOAD_LOCAL any_buf
+        BUF_FREE
+
+        PUSH_0
+        SYS_EXIT
+    .endfunction
+    """
+    rc, out, err = assemble_and_run(src, verbose=False)
+    assert rc == 0, f"Failed with rc={rc}, err={err}"
+    assert "1234 Hello\n" in out, f"Expected '1234 Hello', got: {out!r}"
+    print("  -> ADDR_OF_GLOBAL & PRINTLN OK.")
+
+
 def main():
     print("=== Running NPCode VM Emulator Test Suite ===")
     test_basic_arithmetic()
@@ -358,6 +443,7 @@ def main():
     test_strings_and_slices()
     test_file_io()
     test_verbose_tracing()
+    test_addr_of_global_and_println()
     print("\n=== All NPVM Emulator Tests Passed Successfully! ===")
 
 

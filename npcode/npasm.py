@@ -784,8 +784,10 @@ class Assembler:
         """Constructs the final .npc binary executable."""
         string_pool_bytes = self.string_pool.get_bytes()
 
-        # Build Global Variable Table
-        gvar_table = bytes(g.size for g in self.globals)
+        # Build Global Variable Table (2 bytes per global)
+        gvar_table = bytearray()
+        for g in self.globals:
+            gvar_table.extend(struct.pack(">H", g.size))
 
         # Build Function Table & Local Variable Tables
         func_table = bytearray()

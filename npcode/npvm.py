@@ -165,6 +165,7 @@ class NPVM:
 
         # Variable tables & functions
         self.global_sizes: List[int] = []
+        self.global_addrs: List[int] = []
         self.global_slots: List[List[int]] = []  # slot -> list of 16-bit words
         self.functions: List[FunctionMetadata] = []
         self.string_pool_entries: Dict[int, str] = {}
@@ -209,18 +210,30 @@ class NPVM:
 
         # Calculate section offsets in binary
         gvar_off = HEADER_SIZE
-        spool_off = gvar_off + self.globals_count
+        gvar_size = self.globals_count * 2
+        spool_off = gvar_off + gvar_size
         ftab_off = spool_off + self.string_pool_size
         ftab_size = self.func_count * FUNC_ENTRY_SIZE
 
-        # Global Variable Table
-        self.global_sizes = list(self.raw_binary[gvar_off : gvar_off + self.globals_count])
-        for sz in self.global_sizes:
-            self.global_slots.append([0] * (sz // 2))
+        # Global Variable Table (16-bit size per global)
+        self.global_sizes = [
+            struct.unpack_from(">H", self.raw_binary, gvar_off + i * 2)[0]
+            for i in range(self.globals_count)
+        ]
 
         # Copy String Pool into VM memory
         self.spool_base = 0x0100  # Start string pool at 256
         self.memory[self.spool_base : self.spool_base + self.string_pool_size] = self.raw_binary[spool_off : spool_off + self.string_pool_size]
+
+        # Globals Data Section in VM memory (aligned after String Pool)
+        self.globals_base = (self.spool_base + self.string_pool_size + 1) & ~1
+        self.global_addrs = []
+        curr_g = self.globals_base
+        for sz in self.global_sizes:
+            curr_g = (curr_g + 1) & ~1
+            self.global_addrs.append(curr_g)
+            curr_g += sz
+        self.globals_end = (curr_g + 1) & ~1
 
         # Parse string pool entries for disassembly/tracing
         self._parse_string_pool(self.spool_base, self.string_pool_size)
@@ -252,9 +265,9 @@ class NPVM:
             f = FunctionMetadata(i, is_entry, arg_count, local_count, frame_size, code_offset, f_code_size, v_sizes)
             self.functions.append(f)
 
-        # Copy Bytecode Section into VM memory
+        # Copy Bytecode Section into VM memory (after globals)
         code_src_off = ltab_off + total_var_bytes
-        self.code_base = (self.spool_base + self.string_pool_size + 15) & ~15
+        self.code_base = (self.globals_end + 15) & ~15
         self.memory[self.code_base : self.code_base + self.code_size] = self.raw_binary[code_src_off : code_src_off + self.code_size]
 
         # Heap starts right after bytecode
@@ -473,6 +486,11 @@ class NPVM:
             struct.pack_into(">H", self.memory, obj_ptr + arg, val)
             if self.verbose:
                 print(f"       -> STORE_FIELD offset {arg} at 0x{obj_ptr:04X} <- 0x{val:04X}")
+        elif opcode == 0x30:  # ADDR_OF_GLOBAL
+            addr = self.global_addrs[arg]
+            self._push(addr)
+            if self.verbose:
+                print(f"       -> ADDR_OF_GLOBAL slot {arg} => 0x{addr:04X}")
 
         # -------------------------------------------------------------
         # Group 3: Arithmetic, Logic & Comparisons (0x40 .. 0x5F)
@@ -480,30 +498,30 @@ class NPVM:
         elif opcode == 0x40:  # ADD
             b = self._pop()
             a = self._pop()
-            self._push(a + b)
+            self._push((a + b) & 0xFFFF)
         elif opcode == 0x41:  # SUB
             b = self._pop()
             a = self._pop()
-            self._push(a - b)
+            self._push((a - b) & 0xFFFF)
         elif opcode == 0x42:  # MUL
-            b = self._to_signed(self._pop())
-            a = self._to_signed(self._pop())
-            self._push(a * b)
+            b = self._pop()
+            a = self._pop()
+            self._push((a * b) & 0xFFFF)
         elif opcode == 0x43:  # DIV
-            b = self._to_signed(self._pop())
-            a = self._to_signed(self._pop())
+            b = self._pop()
+            a = self._pop()
             if b == 0:
                 raise VMError("Division by zero", inst_pc, self.current_frame.func.name)
             self._push(a // b)
         elif opcode == 0x44:  # MOD
-            b = self._to_signed(self._pop())
-            a = self._to_signed(self._pop())
+            b = self._pop()
+            a = self._pop()
             if b == 0:
                 raise VMError("Modulo by zero", inst_pc, self.current_frame.func.name)
             self._push(a % b)
         elif opcode == 0x45:  # NEG
-            a = self._to_signed(self._pop())
-            self._push(-a)
+            a = self._pop()
+            self._push((-a) & 0xFFFF)
         elif opcode == 0x46:  # BIT_AND
             b = self._pop()
             a = self._pop()
@@ -518,15 +536,15 @@ class NPVM:
             self._push(a ^ b)
         elif opcode == 0x49:  # BIT_NOT
             a = self._pop()
-            self._push(~a)
+            self._push((~a) & 0xFFFF)
         elif opcode == 0x4A:  # SHL
             b = self._pop() & 15
             a = self._pop()
-            self._push(a << b)
+            self._push((a << b) & 0xFFFF)
         elif opcode == 0x4B:  # SHR
             b = self._pop() & 15
-            a = self._to_signed(self._pop())
-            self._push(a >> b)
+            a = self._pop()
+            self._push((a & 0xFFFF) >> b)
         elif opcode == 0x4C:  # CMP_EQ
             b = self._pop()
             a = self._pop()
@@ -536,31 +554,31 @@ class NPVM:
             a = self._pop()
             self._push(1 if a != b else 0)
         elif opcode == 0x4E:  # CMP_LT
-            b = self._to_signed(self._pop())
-            a = self._to_signed(self._pop())
+            b = self._pop()
+            a = self._pop()
             self._push(1 if a < b else 0)
         elif opcode == 0x4F:  # CMP_LE
-            b = self._to_signed(self._pop())
-            a = self._to_signed(self._pop())
+            b = self._pop()
+            a = self._pop()
             self._push(1 if a <= b else 0)
         elif opcode == 0x50:  # CMP_GT
-            b = self._to_signed(self._pop())
-            a = self._to_signed(self._pop())
+            b = self._pop()
+            a = self._pop()
             self._push(1 if a > b else 0)
         elif opcode == 0x51:  # CMP_GE
-            b = self._to_signed(self._pop())
-            a = self._to_signed(self._pop())
+            b = self._pop()
+            a = self._pop()
             self._push(1 if a >= b else 0)
         elif opcode == 0x52:  # NOT
             a = self._pop()
             self._push(1 if a == 0 else 0)
         elif opcode == 0x53:  # MIN
-            b = self._to_signed(self._pop())
-            a = self._to_signed(self._pop())
+            b = self._pop()
+            a = self._pop()
             self._push(min(a, b))
         elif opcode == 0x54:  # MAX
-            b = self._to_signed(self._pop())
-            a = self._to_signed(self._pop())
+            b = self._pop()
+            a = self._pop()
             self._push(max(a, b))
         elif opcode == 0x55:  # PARSE_INT
             radix = self._pop()
@@ -993,6 +1011,44 @@ class NPVM:
             s_ptr, s_cap, s_len = self._pop_slice()
             text = self._read_string(s_ptr, s_len)
             print(text)
+        elif opcode in (0xCA, 0xCB):  # PRINT (0xCA), PRINTLN (0xCB)
+            is_println = (opcode == 0xCB)
+            s_ptr, s_cap, s_len = self._pop_slice()
+            formatted_parts = []
+            for i in range(s_len):
+                entry_addr = s_ptr + i * 4
+                val_addr = struct.unpack_from(">H", self.memory, entry_addr)[0]
+                type_addr = struct.unpack_from(">H", self.memory, entry_addr + 2)[0]
+                type_name = self._read_cstring(type_addr)
+
+                if type_name in ("word", "uint", "uint16", "int", "int16"):
+                    val = struct.unpack_from(">H", self.memory, val_addr)[0]
+                    formatted_parts.append(str(val))
+                elif type_name in ("byte", "uint8"):
+                    val = self.memory[val_addr]
+                    formatted_parts.append(str(val))
+                elif type_name == "bool":
+                    val = struct.unpack_from(">H", self.memory, val_addr)[0]
+                    formatted_parts.append("true" if val != 0 else "false")
+                elif type_name in ("string", "slice_byte", "slice[byte]", "prelude.slice_byte"):
+                    str_base, str_cap, str_len = struct.unpack_from(">HHH", self.memory, val_addr)
+                    formatted_parts.append(self._read_string(str_base, str_len))
+                elif type_name in ("*byte", "cstring"):
+                    cptr = struct.unpack_from(">H", self.memory, val_addr)[0]
+                    formatted_parts.append(self._read_cstring(cptr))
+                else:
+                    if val_addr != 0:
+                        val = struct.unpack_from(">H", self.memory, val_addr)[0]
+                        formatted_parts.append(str(val))
+                    else:
+                        formatted_parts.append("<nil>")
+
+            out_text = " ".join(formatted_parts)
+            if is_println:
+                print(out_text)
+            else:
+                sys.stdout.write(out_text)
+                sys.stdout.flush()
 
     def _load_local(self, slot: int):
         words = self.current_frame.slots[slot]
@@ -1010,16 +1066,22 @@ class NPVM:
             print(f"       -> STORE_LOCAL slot {slot} <- {val_repr}")
 
     def _load_global(self, slot: int):
-        words = self.global_slots[slot]
-        for w in words:
+        addr = self.global_addrs[slot]
+        sz = self.global_sizes[slot]
+        word_count = (sz + 1) // 2
+        for i in range(word_count):
+            w = struct.unpack_from(">H", self.memory, addr + i * 2)[0]
             self._push(w)
 
     def _store_global(self, slot: int):
-        word_count = len(self.global_slots[slot])
+        addr = self.global_addrs[slot]
+        sz = self.global_sizes[slot]
+        word_count = (sz + 1) // 2
         words = []
         for _ in range(word_count):
             words.insert(0, self._pop())
-        self.global_slots[slot] = words
+        for i, w in enumerate(words):
+            struct.pack_into(">H", self.memory, addr + i * 2, w)
         if self.verbose:
             val_repr = self._format_value(words)
             print(f"       -> STORE_GLOBAL slot {slot} <- {val_repr}")
@@ -1070,6 +1132,12 @@ class NPVM:
         while self.memory[cptr + idx] != 0:
             idx += 1
         return idx
+
+    def _read_cstring(self, cptr: int) -> str:
+        if cptr == 0:
+            return ""
+        length = self._cstrlen(cptr)
+        return self._read_string(cptr, length)
 
     @staticmethod
     def _to_signed(w: int) -> int:

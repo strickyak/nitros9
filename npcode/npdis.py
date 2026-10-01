@@ -103,7 +103,8 @@ class Disassembler:
 
         # Section Offsets
         gvar_offset = HEADER_SIZE
-        spool_offset = gvar_offset + self.globals_count
+        gvar_size = self.globals_count * 2
+        spool_offset = gvar_offset + gvar_size
         ftab_offset = spool_offset + self.string_pool_size
         ftab_size = self.func_count * FUNC_ENTRY_SIZE
 
@@ -112,7 +113,10 @@ class Disassembler:
             raise DisasmError("Truncated binary: unexpected EOF before Function Table end")
 
         # 2. Global Variable Table
-        self.global_sizes = list(self.data[gvar_offset : gvar_offset + self.globals_count])
+        self.global_sizes = [
+            struct.unpack_from(">H", self.data, gvar_offset + i * 2)[0]
+            for i in range(self.globals_count)
+        ]
 
         # 3. String Pool
         pool_bytes = self.data[spool_offset : spool_offset + self.string_pool_size]

@@ -189,6 +189,7 @@ CHAR_VAL    = 'Z'
     BUF_FREE
     LOAD_FIELD 2
     STORE_FIELD 2
+    ADDR_OF_GLOBAL g_counter
 
     ADD
     SUB
@@ -256,6 +257,8 @@ CHAR_VAL    = 'Z'
     SYS_ARGS
     SYS_EXIT
     IO_PRINT
+    PRINT
+    PRINTLN
 
     RET_VOID
 .endfunction
