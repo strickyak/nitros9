@@ -31,3 +31,7 @@ helpmsg
 
 # usim09pt FRAM persistence file (emulator artifact, holds reset vector)
 picothing.fram
+
+# Python bytecode and cache
+__pycache__/
+*.pyc
