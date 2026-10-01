@@ -4,7 +4,7 @@
 
 set Config(engine) "deep65280"
 set Config(flat_img) "/pc/deep65280.img" ;# deep65280.img 64KB boot image
-set Config(drive0) "/pc/deep0.dsk"
+set Config(drive0) "/pc/disk0.dsk"
 set Config(drive1) ""
 menu store Config
 bye

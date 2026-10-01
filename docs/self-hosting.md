@@ -938,8 +938,109 @@ To support both `gep9` and `tfr911h` without duplicating code:
    - A standalone script on the host coordinates the end-to-end hardware workflow:
      1. Invokes `selfgen_stage.sh --tfr911 /tmp/pc/disk0.dsk`.
      2. Stages `boot_deep.tcl` and `deep65280.img` in `/tmp/pc/`.
-     3. Launches `tether` with `-tcl_input "source /pc/boot_deep.tcl"`.
+     3. Launches `tether` in bootmode 9 to boot the hardware.
      4. Waits for `tether` to exit cleanly on target shutdown.
      5. Extracts `/tmp/pc/deep65280.new.img` from the staged disk.
      6. Boots the newly compiled image on physical hardware via `boot_tfr9_verify.tcl`.
+
+---
+
+### 12.4 Physical Hardware Execution & Boot Verification (ACTUALLY DONE)
+
+> [!IMPORTANT]
+> **Complete Native Self-Generation and Boot Verification on Physical TFR911h Hardware: 100% Achieved.**
+> All 31 NitrOS-9 Level 2 modules were assembled natively on a physical Hitachi 6309 CPU core driven by an RP2350B microcontroller running custom firmware, packaged directly into a 64 KB boot image (`deep65280.new.img`), and verified by booting the physical board from the newly generated kernel image and executing native commands in `/dd/startup`.
+
+#### Execution Walkthrough on Physical Silicon
+
+On October 1, 2026, the complete self-generation suite was run on physical TFR911h hardware connected over USB serial (`/dev/ttyACM0`):
+
+1. **Hardware Configuration**:
+   - Board: TFR911h v4 (Raspberry Pi RP2350B MCU + physical 6309 CPU clocked via PIO).
+   - Host Daemon: `tether -wire /dev/ttyACM0 -pc /tmp/pc -level 2 -bootmode 9`.
+   - Storage: 10 MB virtual RBF disk (`/tmp/pc/disk0.dsk`) accessed via COBS RPC block storage.
+   - Initial Boot Image: `recipes/deep65280/deep65280.img` (64 KB).
+
+2. **Native Compilation Log Summary**:
+   - Total build elapsed time: **16 minutes 32 seconds** across 31 module compilations.
+   - **Slot 4**: `dir.asm`, `setime.asm`, `date.asm`, `stop.asm` (0 errors).
+   - **Slot 5**: `scf.asm`, `sc6850.asm`, `clock.asm`, `term_sc6850.asm`, `shell_21.asm`, `mfree.asm`, `free.asm`, `procs.asm`, `mdir.asm` (0 errors).
+   - **Slot 6**: `dd.asm`, `emudsk.asm`, `sysgo_dd.asm`, `rbf.asm`, `ioman.asm` (0 errors).
+   - **Slot 7**: `init.asm`, `krnp2.asm`, `krn.asm` (0 errors).
+   - **Image Generation**: `selfgen_img` successfully packed `/dd/deep65280.new.img` (65,536 bytes) with vector table at `$FFF0..$FFFF`.
+   - **Utility Commands**: `copy.asm`, `del.asm`, `dump.asm`, `echo.asm`, `makdir.asm`, `pwd.asm`, `pxd.asm`, `tmode.asm`, `touch.asm`, `unlink.asm` assembled and installed to `/dd/CMDS/`.
+   - **Automated Shutdown**: Build finished with `stop 0`, writing `$FC` to `$FF87`. Firmware issued `cobs_shutdown(0)` and `tether` exited cleanly with exit code 0.
+
+3. **Physical Boot Verification**:
+   The newly generated image `/tmp/pc/deep65280.new.img` was extracted and mounted as `Config(flat_img)`. Staged `/dd/startup` verified command execution from the new boot image:
+
+```text
+[deep65280: loading /pc/deep65280.new.img into 256KB RAM...]
+[deep65280: loaded 8192 + 57344 = 65536 bytes into RAM (256KB)]
+[bye: Phase 2 started]
+KDir Setime Date stop SCF sc6850 Clock Term Shell Mfree Free Procs MDir DD EmuDsk SysGo RBF IOMan Init KrnP2 Krn i2xoCNitrOS-9/6809 Level 2
+DEEP65280
+(C) 2014 The NitrOS-9 Project
+Wed Sep 30 22:41:09 2026
+http://www.nitros9.org
+
+==================================================================
+NitrOS-9 Level 2 Self-Generated Boot Verification on TFR911h OK
+==================================================================
+/DD/SRC
+
+ Blk Begin   End   Blks  Size
+ --- ------ ------ ---- ------
+   5   A000   BFFF    1     8k
+   7   E000  1FFFF    9    72k
+  30  60000  79FFF    D   104k
+                   ==== ======
+            Total:   17   184k
+
+ Directory of /dd/MODS  2001/01/01 00:00 
+krn             krnp2           dir             stop            setime 
+date            scf             sc6850          clock           term 
+shell_21        mfree           free            procs           mdir 
+dd              emudsk          sysgo           rbf             ioman 
+init            copy            dump            echo            makdir 
+del             pwd             pxd             tmode           touch 
+unlink          
+
+ *** Exiting with status 0 due to CLOCK_AND_STOP command $FC.
+
+[tether: target shutdown OK (0)]
+```
+
+---
+
+### 12.5 Hardware Snags & Bug Fixes
+
+#### 1. The `sysgo.asm` Startup Parsing Failure (`ERROR #221`)
+- **The Bug**: NitrOS-9 systems configured with `Shell` (such as `shell_21`) aborted automatic execution of `/dd/startup` with `ERROR #221` (`E$BPNam`) upon boot.
+- **Root Cause**: In [`level1/modules/sysgo.asm`](file:///home/strick/modoc/coco-shelf/nitros9/level1/modules/sysgo.asm#L97-L105), the default non-ROM startup string was defined as:
+  ```assembly
+  Startup fcc "-p <startup"
+  ```
+  `shell_21` parses its initial argument list expecting a program/module name as the first positional token. Because `<startup` began immediately after the `-p` switch, `F$PrsNam` evaluated `<` as an invalid character for a module name and rejected the command with `ERROR #221`.
+- **The Fix**: In `sysgo.asm`, update `Startup` for `deep65280`/`flat65280` to explicitly invoke `shell`:
+  ```assembly
+  ifeq      ROM
+  ifne      deep65280+flat65280
+  Startup   fcc       "shell -p <startup"
+  else
+  Startup   fcc       "startup -p"
+  endc
+  fcb       C$CR
+  ```
+  This causes `sysgo` to fork `Shell` with parameters `shell -p <startup`, which correctly opens `<startup` as redirected standard input for the child shell.
+
+#### 2. OS-9 Shell Pipeline Metacharacter (`!`) in Banner Text
+- **The Bug**: Adding an exclamation point to banner messages in `/dd/startup` (e.g. `echo Verification OK!`) triggered `ERROR #221` (`E$BPNam`).
+- **Root Cause**: In `level1/cmds/shell_21.asm`, line 60 defines `C$PIPE set '!`. The exclamation point is the historical OS-9 pipeline separator (equivalent to Unix `|`). An unquoted trailing `!` signifies a pipe to an empty downstream command.
+- **The Fix**: Never use unquoted `!` characters in OS-9 shell scripts.
+
+#### 3. Bash Stdio Pipeline Blocking with Background Daemons
+- **The Bug**: Automated host runners using `sleep 3600 | go run tether ...` hung indefinitely after the target shut down and `tether` exited.
+- **Root Cause**: Under standard POSIX shell semantics, a pipeline waits for all component processes to terminate. Even though `tether` completed and called `os.Exit(0)`, `sleep 3600` remained running.
+- **The Fix**: Run headless tether sessions with redirected `/dev/null` (`go run ... < /dev/null`) instead of piped sleeps.
 

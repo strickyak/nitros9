@@ -5,11 +5,25 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NITROS9DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OS9="${OS9:-os9}"
 
-TARGET="${1:-/tmp/pc/disk0.dsk}"
+AUTO_BUILD=0
+TARGET="/tmp/pc/disk0.dsk"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --tfr911|-tfr911)
+            AUTO_BUILD=1
+            shift
+            ;;
+        *)
+            TARGET="$1"
+            shift
+            ;;
+    esac
+done
 
 echo "=================================================================="
 echo "NitrOS-9 Level 2 Self-Generation Staging"
-echo "Target disk: $TARGET"
+echo "Target disk: $TARGET (auto-build=$AUTO_BUILD)"
 echo "=================================================================="
 
 mkdir -p "$(dirname "$TARGET")"
@@ -35,6 +49,8 @@ cat <<'EOF' > "$TMP_DEFS"
 * ====================================================================
 Level               set       2
 DEEP_256K           set       1
+deep65280           set       1
+flat65280           set       0
 NOS9VER             set       0
 NOS9MAJ             set       0
 NOS9MIN             set       0
@@ -281,6 +297,9 @@ setime 2001/01/01
 chx /dd/CMDS
 chd /dd/SRC
 EOF
+if [ "$AUTO_BUILD" = "1" ]; then
+    echo "ncl #64 /dd/selfgen_build.tcl" >> "$TMP_STARTUP"
+fi
 "$OS9" copy -l -r "$TMP_STARTUP" "$TARGET,startup"
 rm -f "$TMP_STARTUP"
 

@@ -96,7 +96,11 @@ AutoExPr            fcc       ""
 AutoExPrL           equ       *-AutoExPr
 
                     ifeq      ROM
+                    ifne      deep65280+flat65280
+Startup             fcc       "shell -p <startup"
+                    else
 Startup             fcc       "startup -p"
+                    endc
                     fcb       C$CR
 StartupL            equ       *-Startup
                     endc
