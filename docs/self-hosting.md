@@ -602,3 +602,203 @@ flowchart TD
 4. **Primary Investment Area**: The only substantial engineering effort required for full self-hosting is the **assembler**—specifically adding command-line symbol definitions (`-D`) and expanding symbol name length in `asm.asm` (or porting a focused subset of `lwasm`).
 
 With 512 KB–2 MB of physical RAM and high-speed `EMUDSK` block storage, `deep65280` on `gep9` provides an ideal platform to realize complete, native self-hosting for NitrOS-9.
+
+---
+
+## 10. Implementation & Verification: Full System Native Self-Generation (ACTUALLY DONE)
+
+> [!IMPORTANT]
+> **Native Self-Hosting is Fully Achieved and Verified on deep65280.**
+> All 21 core boot modules, the 64 KB memory-mapped boot image, and essential Level 2 commands have been compiled, packed, and booted entirely within NitrOS-9 running on the `gep9` emulator without relying on host-side compilation or image generation tools.
+
+The entire native self-generation pipeline has been implemented, validated end-to-end, and checked into the repository under [`recipes/deep65280/`](file:///home/strick/modoc/coco-shelf/nitros9/recipes/deep65280).
+
+### Pipeline Architecture
+
+```mermaid
+flowchart TD
+    subgraph Host ["1. Host Staging (Linux)"]
+        A["selfgen_stage.sh"] --> B["Create RBF disk0.dsk (10MB)"]
+        A --> C["Generate unified DEFS/defsfile"]
+        A --> D["selfgen_preprocess.py (LWASM -> asm)"]
+        D --> E["Populate /dd/SRC with preprocessed sources"]
+        A --> F["Install bootstrap tools in /dd/CMDS<br/>(asm, ncl, selfgen_img, shell)"]
+    end
+
+    subgraph NativeOS9 ["2. Native OS-9 Level 2 Self-Generation (gep9)"]
+        G["selfgen_build.tcl (NCL Script)"] --> H["Assemble 21 Boot Modules into /dd/MODS<br/>(asm #32K source.asm u -o=/dd/MODS/target)"]
+        H --> I["Pack Boot Image with selfgen_img<br/>(/dd/MODS -> /dd/deep65280.new.img)"]
+        I --> J["Assemble 10 Additional Level 2 Commands<br/>(copy, del, dump, echo, makdir, pwd, pxd, tmode, touch, unlink)"]
+        J --> K["Install Built Utilities into /dd/CMDS"]
+        K --> L["Clean Shutdown via stop 0 ($FC Trap)"]
+    end
+
+    subgraph Verification ["3. Verification Boot (gep9)"]
+        M["gep9 -disk0 disk0.dsk deep65280.new.img"] --> N["Boot directly from self-generated image"]
+        N --> O["Kernel verifies module table (i2xoC)"]
+        O --> P["Execute native commands (pwd, makdir, touch, dump, del, echo, mfree)"]
+    end
+
+    Host --> NativeOS9 --> Verification
+```
+
+### Components Implemented in `recipes/deep65280`
+
+1. **[`selfgen_stage.sh`](file:///home/strick/modoc/coco-shelf/nitros9/recipes/deep65280/selfgen_stage.sh)**:
+   - Formats a 40,000-sector (10 MB) RBF disk image (`/tmp/pc/disk0.dsk`).
+   - Generates a unified `DEFS/defsfile` combining `os9.d`, `scf.d`, `rbf.d`, and `deep65280.d` with platform conditional equates (`Level=2`, `DEEP_256K=1`, `Pauses=0`).
+   - Generates modular assembly wrappers in `/dd/SRC` for complementary modules (`dd.asm`, `sysgo_dd.asm`, `pwd.asm`, `pxd.asm`, `tmode.asm`, `xmode_bld.asm`).
+   - Preprocesses all boot modules, kernel helpers, and Level 2 commands.
+   - Installs the bootstrap toolset (`asm`, `ncl`, `selfgen_img`, `shell`, and system files) into `/dd/CMDS` and `/dd/SYS`.
+
+2. **[`selfgen_preprocess.py`](file:///home/strick/modoc/coco-shelf/nitros9/recipes/deep65280/selfgen_preprocess.py)**:
+   - Translates LWASM assembly syntax into Microware / Curtis Boyle `asm` compatible source:
+     - Converts `@`-local labels into scope-unique labels fitting `asm`'s 8-character symbol table.
+     - Resolves 8-character prefix collisions across symbols (e.g. `CLOCK_AND_STOP.*` -> `CAS.*`).
+     - Replaces `IFNDEF` with `IFNDF` and `ENDIF` with `ENDC`.
+     - Translates symbolic/expression `fill` directives into `fcb` sequences.
+     - Strips trailing quotes on character literals (`#'0'` -> `#'0`).
+     - Distinguishes opcodes from column-0 labels (`r'^\s+ERROR\b'`), ensuring labels like `Error pshs b,cc` in commands are not mangled.
+
+3. **[`selfgen_img.c`](file:///home/strick/modoc/coco-shelf/nitros9/recipes/deep65280/selfgen_img.c)** & **`selfgen_img`**:
+   - Native OS-9 tool written in C and compiled with CMOC.
+   - Replaces `build_img.py` on the target system.
+   - Inspects compiled modules in `/dd/MODS`, validates `$87CD` sync, calculates slot offsets abutting slot boundaries, copies modules into the 64 KB image, installs the full 4,352-byte kernel with exception trampolines, and writes the CPU vector table at `$FFF0..$FFFF`.
+
+4. **[`selfgen_build.tcl`](file:///home/strick/modoc/coco-shelf/nitros9/recipes/deep65280/selfgen_build.tcl)**:
+   - Native build script executed by NCL (Tcl running under NitrOS-9).
+   - Disables terminal page pauses via `tmode pau=0`.
+   - Iterates through the 21 boot modules across all four MMU slots:
+     - **Slot 4**: `dir`, `setime`, `date`, `stop`
+     - **Slot 5**: `scf`, `sc6850`, `clock`, `term`, `shell_21`, `mfree`, `free`, `procs`, `mdir`
+     - **Slot 6**: `dd`, `emudsk`, `sysgo`, `rbf`, `ioman`
+     - **Slot 7**: `init`, `krnp2`, `krn`
+   - Invokes `selfgen_img /dd/MODS /dd/deep65280.new.img` to pack the boot image.
+   - Assembles 10 additional Level 2 commands (`copy`, `del`, `dump`, `echo`, `makdir`, `pwd`, `pxd`, `tmode`, `touch`, `unlink`).
+   - Copies built utility modules into `/dd/CMDS`.
+   - Halts the emulator with status 0 using `stop 0`.
+
+5. **[`selfgen_build.sh`](file:///home/strick/modoc/coco-shelf/nitros9/recipes/deep65280/selfgen_build.sh)**:
+   - OS-9 shell script providing an alternative to NCL for environments lacking NCL.
+
+### Actual Execution & Boot Verification
+
+The complete native build takes under 60 seconds on `gep9`:
+- All 21 boot modules assembled with **0 errors**.
+- All 10 command modules assembled with **0 errors**.
+- `selfgen_img` successfully generated the 65,536-byte `/dd/deep65280.new.img`.
+
+Booting `gep9` directly from the newly generated `deep65280.new.img`:
+
+```text
+KDir Setime Date stop SCF sc6850 Clock Term Shell Mfree Free Procs MDir DD EmuDsk SysGo RBF IOMan Init KrnP2 Krn i2xoCNitrOS-9/6809 Level 2
+
+DEEP65280
+
+(C) 2014 The NitrOS-9 Project
+
+Wed Sep 30 22:41:09 2026
+
+http://www.nitros9.org
+
+
+
+
+Shell
+
+
+
+OS9:pwd
+/DD
+
+OS9:echo Hello from native NitrOS-9
+Hello from native NitrOS-9
+
+OS9:makdir /dd/TESTDIR
+
+OS9:touch /dd/TESTDIR/foo
+
+OS9:dump /dd/TESTDIR/foo
+
+OS9:del /dd/TESTDIR/foo
+
+OS9:mfree
+
+ Blk Begin   End   Blks  Size
+ --- ------ ------ ---- ------
+   3   6000   7FFF    1     8k
+   5   A000  1FFFF    B    88k
+  30  60000  79FFF    D   104k
+                   ==== ======
+            Total:   19   200k
+
+OS9:stop 0
+
+
+ *** Exiting with status 0 due to CLOCK_AND_STOP command $FC.
+```
+
+---
+
+## 11. Lessons Learned, Snags for the Unwary & Bug Workarounds
+
+During the implementation and verification of native self-hosting, several subtle architectural and tool-chain bugs were uncovered. Anyone attempting native OS-9 system generation or cross-tool integration should be aware of these gotchas.
+
+### 1. Kernel Post-`emod` Code and Trampolines ($FEEE..$FEFF)
+> [!CAUTION]
+> **Never copy `krn` by the size indicated in its module header (`M$Size`).**
+
+- **The Snag**: The `krn` module file size is exactly 4,352 bytes (`$1100`), spanning `$EE00` to `$FEFF`. However, its module header field `M$Size` reports only 4,319 bytes (`$10DF`). The module officially ends at `emod`, but following `emod` are 33 critical bytes in the hardware locked `$FExx` page containing `SWIStack` and CPU exception trampoline vectors (`$FEEE..$FEFF`).
+- **The Symptom**: When an image builder copies only `M$Size` bytes into the boot image, addresses `$FEEE..$FEFF` remain all zeroes. When the first system call (`SWI2`) fires, the CPU jumps to `$FEF1` (zero opcode `neg <0`), sleds through memory, and crashes into I/O space at `$FF00..$FF04` with an emulator panic (`stray read at 0xFF04`).
+- **The Fix**: The boot image builder must unconditionally copy the full 4,352 bytes (`0x1100`, up to `$FF00`) for `krn`.
+
+### 2. Terminal Screen Pauses (`IT.PAU`) Freezing Headless Builds
+> [!WARNING]
+> **Default terminal device descriptors enable screen pauses after 24 lines, silently halting automated scripts.**
+
+- **The Snag**: In `level1/modules/term_sc6850.asm`, the device descriptor historically set `Pauses equ 1`. When standard output written to `/term` reached 24 lines (one screen height), the SCF driver suspended the process waiting for an interactive keystroke.
+- **The Defective Include Order**: In `term_sc6850.asm`, the conditional block:
+  ```assembly
+  ifndef Pauses
+  Pauses equ 1
+  endif
+  ```
+  was placed *before* `use defsfile`. Because `Pauses` was unconditionally defined before `defsfile` was even read, definitions in `defsfile` or `deep65280.d` were completely ignored or caused "Multiply defined symbol" errors.
+- **The Fix**:
+  1. In `term_sc6850.asm`, move `use defsfile` before `ifndef Pauses`.
+  2. Set `Pauses set 0` in `defs/deep65280.d` to disable screen pausing by default on headless and emulator serial targets.
+  3. Include `tmode pau=0` at the very beginning of build scripts.
+
+### 3. Binary File Corruption by ToolShed `os9 copy -l`
+> [!CRITICAL]
+> **Never use `os9 copy -l` on binary files, modules, or boot images.**
+
+- **The Snag**: The `-l` flag in ToolShed's `os9 copy` activates line ending translation (converting line feed `$0A` to/from carriage return `$0D`).
+- **The Symptom**: If an automated script extracts a 64 KB boot image or binary module using `os9 copy -l`, every single `$0D` byte in machine code, offsets, pointers, and sync bytes is silently mutated into `$0A`. When booted, `krn` fails module CRC/header checks, skips damaged modules, misinterprets random data as module headers, prints garbled characters, and terminates with `$FD` (`CLOCK_AND_STOP.Exit1`).
+- **The Fix**: Always use binary copy flags: `os9 copy -o=0 -r <source> <dest>`.
+
+### 4. Go `flag.Parse()` CLI Argument Ordering in `gep9`
+> [!NOTE]
+> **Positional arguments terminate flag processing in Go standard library `flag`.**
+
+- **The Snag**: Go's `flag.Parse()` stops scanning for options as soon as the first non-flag argument is encountered.
+- **The Symptom**: Invoking `/path/to/gep9 <options> image.img -disk0 disk.dsk` places `-disk0` *after* `image.img`. Consequently, `-disk0` is treated as an unparsed positional argument rather than a flag. `gep9` starts with drive 0 unattached; NitrOS-9 boots, but `I$ChgDir` to `/dd` fails and the boot loops indefinitely printing `'x'`.
+- **The Fix**: Place all flags prior to the positional boot image:
+  ```bash
+  gep9 [options] -disk0 /path/to/disk0.dsk recipes/deep65280/deep65280.img
+  ```
+
+### 5. OS-9 Shell Metacharacter Collision (`!`)
+- **The Snag**: In the NitrOS-9 shell (`Shell`), the exclamation mark `!` is an alias for the pipe character `|`.
+- **The Symptom**: A command such as `echo Build Complete!` is parsed by `Shell` as a command `echo Build Complete` piped into an empty path, instantly failing with `ERROR #221` (`E$BPNam` - Bad Path Name).
+- **The Fix**: Avoid unquoted `!` characters in shell strings.
+
+### 6. Assembler Symbol Table Limits and Opcode vs. Label Regexes
+- **8-Character Symbol Clashing**: Native `asm` only compares the first 8 characters of symbol names. Preamble definitions like `DEEP65280.D` collide with `DEEP65280`; register constants like `CLOCK_AND_STOP.Exit0` collide with other constants sharing the `CLOCK_AND_STOP` prefix. `selfgen_preprocess.py` shortens prefixes (e.g. `CAS.Ex0`).
+- **The `ERROR` Directive Trap**: LWASM supports an `ERROR` directive to generate assembly-time errors. A naive preprocessor matching `re.match(r'^\s*ERROR\b', line)` will accidentally match standard assembly labels starting at column 0 (such as `Error pshs b,cc` in `makdir.asm` and `tmode.asm`), commenting out the error handling routines and causing undefined symbol errors later in the assembly. The preprocessor must require leading whitespace (`r'^\s+ERROR\b'`) to distinguish opcodes from labels.
+- **Symbol Table Memory Exhaustion**: By default, `asm` allocates an inadequate data segment for complex modules. Native assembly commands must specify extra memory pages (e.g. `asm #32K source.asm u -o=dest` or `9fork -m32K asm ...`) to prevent `***** Error: symbol table full`.
+
+### 7. Disk Cache Flushing in Virtual Machine Emulators
+- **The Snag**: Emulators caching block writes in host RAM may exit via emulator control traps (e.g. `$FF87 = $FC`) or signals without executing normal exit handlers.
+- **The Symptom**: Disk files created during an OS-9 session disappear or revert to earlier versions after the emulator halts.
+- **The Fix**: In [`cmd/gep9/main.go`](file:///home/strick/github.com/strickyak/hatvan-os/cmd/gep9/main.go), explicit disk flushing routines were hooked into `bus.OnHalt`, `signal.Notify` (`SIGINT`/`SIGTERM`), and `defer flushDisks()` to guarantee that modified disk blocks are flushed to host storage upon any exit.
