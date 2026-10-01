@@ -802,3 +802,144 @@ During the implementation and verification of native self-hosting, several subtl
 - **The Snag**: Emulators caching block writes in host RAM may exit via emulator control traps (e.g. `$FF87 = $FC`) or signals without executing normal exit handlers.
 - **The Symptom**: Disk files created during an OS-9 session disappear or revert to earlier versions after the emulator halts.
 - **The Fix**: In [`cmd/gep9/main.go`](file:///home/strick/github.com/strickyak/hatvan-os/cmd/gep9/main.go), explicit disk flushing routines were hooked into `bus.OnHalt`, `signal.Notify` (`SIGINT`/`SIGTERM`), and `defer flushDisks()` to guarantee that modified disk blocks are flushed to host storage upon any exit.
+
+---
+
+## 12. Native Self-Generation on Physical Hardware: TFR911h vs. gep9
+
+While Section 10 documented the initial proof and verification of native self-generation on the software emulator (`gep9`), the ultimate hardware target is the physical **TFR911h** board (combining a Raspberry Pi RP2350B microcontroller running custom firmware and a physical Motorola 6809 or Hitachi 6309 CPU).
+
+Because both `gep9` and the `tfr911h` firmware implement the identical `deep65280` hardware specification, the OS-9 Level 2 binary modules, kernel code, and NCL build scripts execute without modification. However, running the self-generation procedure on physical hardware introduces important operational, timing, and orchestration differences.
+
+### 12.1 Architectural Parity vs. Operational Differences
+
+```mermaid
+flowchart TD
+    subgraph Emulation ["gep9 Emulator"]
+        G_CPU["Emulated 6809 CPU (~50-100 MHz)"]
+        G_DSK["Direct Host Memory I/O (Sub-microsecond)"]
+        G_RUN["CLI Flags (-deep65280, -disk0, -input)"]
+        G_EXIT["$FF87 = $FC -> Immediate os.Exit(0)"]
+    end
+
+    subgraph Hardware ["TFR911h Physical Hardware"]
+        H_CPU["Physical 6809/6309 Microchip (2-8 MHz)"]
+        H_DSK["EMUDSK via USB Serial COBS/RPC (~1-2 ms / sector)"]
+        H_RUN["Host Tether Daemon + RP2350 Tcl REPL + /dd/startup"]
+        H_EXIT["$FF87 = $FC -> cobs_shutdown(0) -> tether exits 0"]
+    end
+```
+
+| Aspect | `gep9` (Go Software Emulator) | `TFR911h` (RP2350B + Physical 6809/6309) |
+| :--- | :--- | :--- |
+| **CPU Execution** | Emulated in Go software on host PC (~50–100 MHz equivalent). Total build takes **~55 seconds**. | Real physical 6809 or 6309 microchip clocked at 2–8 MHz via RP2350 PIO ("hamster"). Total build takes **~20 to 40 minutes**. |
+| **Host Connectivity** | Standalone process on Linux; direct process stdio, no daemon required. | Tethered via USB CDC serial (`/dev/ttyACM0`) to the **`tether`** Go host daemon (`./tether.sh -pc /tmp/pc`). |
+| **Boot Invocation** | Direct CLI flags:<br>`gep9 -deep65280 deep.img -disk0 disk0.dsk` | Firmware boots into RP2350 Tcl REPL (`TCL> `). NitrOS-9 is launched by setting Tcl config (`Config(engine)`, `Config(flat_img)`, `Config(drive0)`) and running `bye`. Automated via `tether -tcl_input` or `--bootmode`. |
+| **Command Injection** | CLI flag `-input "ncl #64 /dd/selfgen_build.tcl\n"` feeds the virtual ACIA FIFO on shell start. | Hardware cannot accept CLI flags. Headless automation is achieved by embedding the command into `/dd/startup`. |
+| **EMUDSK Block Storage** | Sub-microsecond. Sector read/write is an in-memory `pread`/`pwrite` on the Linux host file. | **1–2 ms per sector**. Every 256-byte sector request at `$FF83` triggers an RP2350 VFS RPC round-trip over USB serial COBS to `tether`. With 31 compiler passes reading/writing hundreds of sectors, disk latency contributes significantly to build duration. |
+| **Shutdown & Halting** | Writing `$FC` to `$FF87` causes `gep9` to terminate immediately via `os.Exit(0)`. | Writing `$FC` to `$FF87` triggers `cobs_shutdown(0)` over USB to `tether` and resets the RP2350 via `rp2350_reset_standard()`. `tether` receives `C_SHUTDOWN` and exits cleanly with `os.Exit(0)`. |
+| **Target Disk Naming** | Staged as `/tmp/pc/disk0.dsk`. | Must ensure firmware `Config(drive0)` references `/pc/disk0.dsk` (resolving to `/tmp/pc/disk0.dsk`). |
+| **Verification Boot** | Re-run `gep9` passing `/tmp/pc/deep65280.new.img` directly. | Extract `deep65280.new.img` from `/tmp/pc/disk0.dsk` on the host, point firmware `Config(flat_img)` to `/pc/deep65280.new.img`, and boot on physical hardware. |
+
+---
+
+### 12.2 Deep Dive into Key Differences
+
+#### 1. Clock Rate & Multi-Pass Build Duration
+On `gep9`, compiling all 21 boot modules, linking the image, and compiling 10 Level 2 commands executes in under a minute because the Go interpreter executes instructions as fast as the host CPU cores can run.
+
+On `TFR911h`, the physical CPU runs at a hardware bus speed of 2.0 to 7.16 MHz. Each module compilation with `asm #32K` performs two passes over source lines, extensive label lookups, and symbol table management in RAM. Running 31 separate compilations on physical 8-bit silicon takes approximately 20–35 minutes of pure CPU time. Any automated host script or CI runner must configure its watchdog timeout accordingly (e.g. 45–60 minutes).
+
+#### 2. EMUDSK Latency Over USB CDC / COBS Protocol
+In `gep9`, reading or writing a disk sector is an instantaneous Linux memory read/write. On `TFR911h`:
+1. The 6809 sets up EMUDSK registers (`$FF80..$FF82` LSN, `$FF84..$FF85` buffer address, `$FF86` drive).
+2. The 6809 writes command 1 (Read) or 2 (Write) to `$FF83`.
+3. The RP2350B PIO intercepts the write and delegates it to the RP2350 background VFS task.
+4. If the target drive is mounted from `/pc/` (host filesystem), the RP2350 packages a COBS RPC request and sends it over USB CDC serial to the host `tether` process.
+5. `tether` reads or writes the 256 bytes in `/tmp/pc/disk0.dsk` and returns a COBS RPC reply packet over USB.
+6. The RP2350 transfers the data into 6809 physical RAM and completes the I/O handshake.
+
+Each sector access therefore requires a full USB round-trip (~1–2 ms). While the NitrOS-9 RBF cache mitigates redundant reads, a complete system build reads thousands of source sectors and writes hundreds of object sectors, adding 5–10 minutes of cumulative I/O latency.
+
+#### 3. Keystroke Automation: CLI `-input` vs. `/dd/startup`
+Under `gep9`, automated headless builds utilized the `-input` CLI flag to queue keystrokes directly into the emulator's ACIA receive FIFO:
+```bash
+gep9 -deep65280 deep65280.img -disk0 disk0.dsk -input "ncl #64 /dd/selfgen_build.tcl\n"
+```
+On physical hardware, there is no command-line interface to inject keystrokes into the 6809 CPU. While `tether` supports sending keyboard characters from host stdin via `InkeyRoutine`, streaming characters over a live USB serial link immediately after CPU reset is vulnerable to serial framing races during early kernel initialization.
+
+The robust, deterministic, and unattended solution is **`/dd/startup`**:
+When NitrOS-9 boots, `sysgo` automatically executes `/dd/startup` before launching the interactive shell. By placing the build command inside `/dd/startup`, the system starts the self-generation process immediately and deterministically upon boot without external character streaming.
+
+#### 4. Halting & Exit Parity via `$FF87 = $FC`
+Both platforms achieve clean, unattended exit detection via the `CLOCK_AND_STOP` register at `$FF87`:
+- In [`recipes/deep65280/selfgen_build.tcl`](file:///home/strick/modoc/coco-shelf/nitros9/recipes/deep65280/selfgen_build.tcl), successful completion calls `9fork -m8K stop 0`.
+- The `stop 0` command writes `$FC` to `$FF87`.
+- In `tfr911h` firmware (`v4_tfr911h_main.cpp`):
+  ```cpp
+  void IN_RAM clock_and_stop_writer(uint, byte data) {
+    if (data == 0xFC) {
+      cobs_printf("\n *** Exiting with status 0 due to CLOCK_AND_STOP command $FC.\n");
+      cobs_shutdown(0);
+      stdio_flush();
+      sleep_ms(100);
+      rp2350_reset_standard();
+    }
+  }
+  ```
+- The firmware sends a `C_SHUTDOWN` packet with status 0 over USB and resets the RP2350 into its bootloader.
+- In `tether` (`tconsole.go`):
+  ```go
+  case C_SHUTDOWN:
+      exitStatus := pkt[1]
+      switch exitStatus {
+      case 0:
+          fmt.Printf("\n[tether: target shutdown OK (0)]\n")
+          RestoreSttyState()
+          os.Exit(0)
+      case 1:
+          fmt.Printf("\n[tether: target shutdown ERROR (1)]\n")
+          RestoreSttyState()
+          os.Exit(1)
+  ```
+- `tether` receives `C_SHUTDOWN`, restores the Linux host terminal settings, and exits with return code 0 (or 1 if the build failed and issued `stop 1`). This provides exact exit-code parity with `gep9` for Linux shell scripts and CI automation.
+
+---
+
+### 12.3 Script Adaptations: Flags vs. `selfgen911_` Conventions
+
+To support both `gep9` and `tfr911h` without duplicating code:
+
+1. **Target-side Scripts (Unchanged)**:
+   - [`recipes/deep65280/selfgen_build.tcl`](file:///home/strick/modoc/coco-shelf/nitros9/recipes/deep65280/selfgen_build.tcl) and [`recipes/deep65280/selfgen_build.sh`](file:///home/strick/modoc/coco-shelf/nitros9/recipes/deep65280/selfgen_build.sh) remain single source-of-truth.
+   - [`recipes/deep65280/selfgen_img`](file:///home/strick/modoc/coco-shelf/nitros9/recipes/deep65280/selfgen_img) and [`recipes/deep65280/selfgen_preprocess.py`](file:///home/strick/modoc/coco-shelf/nitros9/recipes/deep65280/selfgen_preprocess.py) are identical across both.
+
+2. **Staging Script (`selfgen_stage.sh --tfr911`)**:
+   - [`recipes/deep65280/selfgen_stage.sh`](file:///home/strick/modoc/coco-shelf/nitros9/recipes/deep65280/selfgen_stage.sh) accepts an optional `--tfr911` flag.
+   - When specified, `/dd/startup` is configured to automatically invoke the build upon boot:
+     ```bash
+     TMP_STARTUP="$(mktemp)"
+     cat <<'EOF' > "$TMP_STARTUP"
+     tmode </term pau=0
+     setime 2001/01/01
+     chx /dd/CMDS
+     chd /dd/SRC
+     EOF
+     if [ "$AUTO_BUILD" = "1" ]; then
+         echo "ncl #64 /dd/selfgen_build.tcl" >> "$TMP_STARTUP"
+     fi
+     ```
+
+3. **Firmware Boot Scripts (`boot_tfr9.tcl` & `boot_tfr9_verify.tcl`)**:
+   - Update [`recipes/deep65280/boot_tfr9.tcl`](file:///home/strick/modoc/coco-shelf/nitros9/recipes/deep65280/boot_tfr9.tcl) to ensure `Config(drive0)` references `/pc/disk0.dsk`.
+   - Provide `recipes/deep65280/boot_tfr9_verify.tcl` setting `Config(flat_img) "/pc/deep65280.new.img"`.
+
+4. **Dedicated Hardware Host Runner (`selfgen911_run.sh`)**:
+   - A standalone script on the host coordinates the end-to-end hardware workflow:
+     1. Invokes `selfgen_stage.sh --tfr911 /tmp/pc/disk0.dsk`.
+     2. Stages `boot_deep.tcl` and `deep65280.img` in `/tmp/pc/`.
+     3. Launches `tether` with `-tcl_input "source /pc/boot_deep.tcl"`.
+     4. Waits for `tether` to exit cleanly on target shutdown.
+     5. Extracts `/tmp/pc/deep65280.new.img` from the staged disk.
+     6. Boots the newly compiled image on physical hardware via `boot_tfr9_verify.tcl`.
+
