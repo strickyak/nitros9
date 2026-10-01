@@ -4,9 +4,6 @@
 * Edt/Rev  YYYY/MM/DD  Modified by
 * Comment
 * ------------------------------------------------------------------
- ifndef Pauses
-Pauses equ 1        ; Default for IT.PAU pause:0=no end of page pause
- endif
                     nam       Term
                     ttl       sc6850 Device Descriptor
 
@@ -15,6 +12,10 @@ Pauses equ 1        ; Default for IT.PAU pause:0=no end of page pause
                     ifp1
                     use       defsfile
                     endc
+
+ ifndef Pauses
+Pauses equ 1        ; Default for IT.PAU pause:0=no end of page pause
+ endif
 
 tylg                set       Devic+Objct
 atrv                set       ReEnt+rev

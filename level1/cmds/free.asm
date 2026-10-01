@@ -64,8 +64,8 @@ HelpMsg fcb C$LF
  fcb C$LF
  fcc " tells how many disk sectors are unused"
  fcb C$CR
- endc
 HelpSz equ *-HelpMsg
+ endc
  
 CREATE fcs /" created on:/
 CAPCTY fcs "Capacity:"

@@ -350,11 +350,11 @@ l@                  std       ,x++      ; now clear memory 16 bits at a time
                     pshs      b
                     ldb       #$7E      JMP extended opcode
                     stb       <D.BtBug  store opcode at D.BtBug
-                    leax      PicoBtBug,pcr address of the ACIA output routine
+                    leax      <PicoBtBug,pcr address of the ACIA output routine
                     stx       <D.BtBug+1 store 2-byte target address
                     ldb       #$7E      JMP opcode for D.Crash (always active)
                     stb       <D.Crash  store JMP opcode at D.Crash
-                    leax      PicoCrash,pcr address of crash handler
+                    leax      <PicoCrash,pcr address of crash handler
                     stx       <D.Crash+1 store 2-byte target address
                   IFNE    picothing
                     ldb       #$01      protect vector area from stray writes

@@ -42,9 +42,9 @@ SkipSpc             lda       ,x+
                     beq       SkipSpc
 
 * Check for '0' or '1'
-                    cmpa      #'0'
+                    cmpa      #'0
                     beq       Chk0
-                    cmpa      #'1'
+                    cmpa      #'1
                     beq       Chk1
                     bra       DoCrash
 

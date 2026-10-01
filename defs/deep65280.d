@@ -1,5 +1,5 @@
-                    ifne      DEEP65280.D-1
-DEEP65280.D         set       1
+                    ifne      D65280_D-1
+D65280_D            set       1
 
 ********************************************************************
 * deep65280.d - NitrOS-9 Level 2 System Definitions for deep65280v2
@@ -57,6 +57,8 @@ TkPerTS             equ       1
 * Device descriptor hardware page & base
 HW.Page             set       $07
 HwBASE              equ       $FF88
+* Terminal page pause default (0 = disable screen pausing)
+Pauses              set       0
 ACIA_PORT           equ       $FF88
 
 * EMUDSK registers ($FF80..$FF86)
