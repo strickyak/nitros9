@@ -22,7 +22,8 @@ NP and NPCode are fundamentally designed around static typing and raw 16-bit wor
 1. **Strongly-Typed (A Go-Like Machine, Not Python)**:
    - NP is a **statically, strongly-typed language**. Every variable, function parameter, return value, struct field, and collection element type is checked and known at compile time.
    - The VM does **not** perform dynamic type checking or inspect runtime type tags.
-   - A 16-bit word on the operand stack might represent an `int16_t`, a `uint16_t`, a pointer to a `List` or `Dict`, or half of a 32-bit integer (`int32` / `uint32`).
+   - A 16-bit word on the operand stack represents an `int16_t`, a `uint16_t`, or a pointer to a `List`, `Dict`, `String`, or `Struct`.
+   - In the rare case that 32-bit functionality is needed (e.g. for filesystem size or sector APIs), the program codes it explicitly using two `uint16_t` variables in the host language rather than introducing a 32-bit VM type.
    - When looking up an element in a dictionary (`DICT_GET`), the VM extracts a raw 16-bit word. The compiler and generated code already know whether that word is an integer, boolean, or a pointer to a specific structure or list.
 2. **Simplified Nil: No Nil Object**:
    - Pointers to `Dict`, `List`, `String`, or `Struct` can be `$0000`, which is a **nil pointer** (`NULL`).
@@ -33,7 +34,7 @@ NP and NPCode are fundamentally designed around static typing and raw 16-bit wor
    - The `if` construct (and `while`, `JUMP_IF_FALSE`, `JUMP_IF_TRUE`) simply tests whether a 16-bit word is `$0000` (false / nil / zero) or non-zero (true / valid pointer / non-zero integer). This single instruction uniformly handles boolean checks, null pointer tests, and integer zero tests without special cases.
 4. **Strict 1-Byte Opcodes**:
    - Every opcode is exactly 1 byte (`0x00` .. `0xFF`).
-   - The opcode itself completely defines how many argument bytes follow it in the instruction stream (0, 1, 2, or 4 bytes) and what format they take.
+   - The opcode itself completely defines how many argument bytes follow it in the instruction stream (0, 1, or 2 bytes) and what format they take.
    - There are **no argument type tags** in the bytecode stream.
 5. **Zero-Byte Arguments for Frequent Operations**:
    - Frequent instructions require **0 argument bytes**: `PUSH_NIL`, `RET`, `RET_VOID`, `PUSH_0`, `PUSH_1`, `PUSH_TRUE`, `PUSH_FALSE`, `ADD`, `SUB`, `DUP`, `POP`, and fast local accesses (`LOAD_LOCAL_0` .. `LOAD_LOCAL_3`).
@@ -52,7 +53,6 @@ NP features a Go-inspired, statically typed syntax with explicit error handling 
 ### 2.1 Types
 - **`int` / `int16`**: 16-bit signed integer ($-32,768 \dots +32,767$).
 - **`uint` / `uint16`**: 16-bit unsigned integer ($0 \dots 65,535$).
-- **`int32`**: 32-bit signed integer (represented on stack as two 16-bit words: `[hi, lo]`).
 - **`bool`**: Boolean value (`false` = `$0000`, `true` = `$0001`).
 - **`str`**: Pointer to immutable sequence of bytes. Slices produce lightweight views (`string_view`) referencing parent memory without allocation.
 - **`List[T]`**: Dynamic array of 16-bit values of type `T`. Pointers can be `$0000` (`nil`).
@@ -118,7 +118,7 @@ flowchart TD
         Hdr["NPC Header (16 bytes)"]
         SPool["Raw String Pool (Consecutive text bytes, no tags)"]
         Globals["Global Variables (16-bit word slots)"]
-        Code["Bytecode Stream: [1-byte opcode][0, 1, 2, or 4 arg bytes]"]
+        Code["Bytecode Stream: [1-byte opcode][0, 1, or 2 arg bytes]"]
         Heap["Dynamic Heap / Line Arena"]
     end
 
@@ -134,10 +134,10 @@ Every slot on the operand stack is a uniform **16-bit word (`uint16_t`)**.
   - Pop 16-bit word into `D`: `pulu d` (2 bytes, 5 cycles).
   - Peek top of stack: `ldd ,u`.
 
-### 3.2 32-Bit Integers
-A 32-bit integer (`int32` / `uint32`) occupies **two 16-bit words** on the stack:
-- High 16-bit word pushed first, low 16-bit word pushed second (`[hi, lo]`).
-- Operations on 32-bit values (`ADD32`, `SUB32`, `CMP32`) operate directly on these word pairs without heap allocation.
+### 3.2 Elimination of 32-Bit Types
+To keep the virtual machine minimal, fast, and simple on 8-bit CPUs like the 6809:
+- There are no 32-bit integer types (`int32`, `uint32`) or 32-bit math opcodes in the VM.
+- In the rare instances where 32-bit arithmetic or offsets are needed (such as file positions or sector numbers in OS-9 filesystem APIs), the source code represents and manipulates them explicitly as two 16-bit variables (`hi: uint16, lo: uint16`) in the host language.
 
 ### 3.3 Call Frame Structure (Call Stack)
 The hardware stack `S` (or dedicated call stack) tracks function activation:
@@ -194,14 +194,13 @@ NPCode binary files are compiled bytecode executables. Multi-byte integers are s
 
 ## 5. Instruction Set Architecture (ISA)
 
-Every instruction starts with a **1-byte opcode**. The opcode explicitly defines whether it takes **0, 1, 2, or 4 argument bytes**. There are no dynamic type tags in the bytecode stream.
+Every instruction starts with a **1-byte opcode**. The opcode explicitly defines whether it takes **0, 1, or 2 argument bytes**. There are no dynamic type tags in the bytecode stream.
 
 ### 5.1 Immediate Argument Encoding Formats
 - **None (0 bytes)**: Opcode is completely standalone.
 - **`<imm8>` (1 byte)**: 8-bit immediate value (slot index, small integer, or width).
-- **`<imm16>` (2 bytes)**: 16-bit big-endian immediate value (string offset, global slot, capacity).
+- **`<imm16>` (2 bytes)**: 16-bit big-endian immediate value (string offset, global slot, capacity, function index).
 - **`<rel16>` (2 bytes)**: 16-bit big-endian signed relative branch offset.
-- **`<imm32>` (4 bytes)**: 32-bit big-endian integer (high word, low word).
 
 ---
 
@@ -221,11 +220,10 @@ Every instruction starts with a **1-byte opcode**. The opcode explicitly defines
 | `0x07` | `PUSH_I8` | **1** | `<imm8>` | `[] -> [val]` | Push sign-extended 8-bit integer (-128..127). |
 | `0x08` | `PUSH_U8` | **1** | `<imm8>` | `[] -> [val]` | Push zero-extended 8-bit unsigned integer (0..255). |
 | `0x09` | `PUSH_I16` | **2** | `<imm16>` | `[] -> [val]` | Push 16-bit big-endian integer. |
-| `0x0A` | `PUSH_I32` | **4** | `<imm32>` | `[] -> [hi, lo]` | Push 32-bit integer as two 16-bit words. |
-| `0x0B` | `PUSH_STR` | **2** | `<imm16>` | `[] -> [str_ptr]`| Push pointer to string in String Pool at offset. |
-| `0x0C` | `POP` | **0** | None | `[a] -> []` | Discard top 16-bit word from stack. |
-| `0x0D` | `DUP` | **0** | None | `[a] -> [a, a]` | Duplicate top 16-bit word. |
-| `0x0E` | `SWAP` | **0** | None | `[a, b] -> [b, a]`| Swap top two 16-bit words. |
+| `0x0A` | `PUSH_STR` | **2** | `<imm16>` | `[] -> [str_ptr]`| Push pointer to string in String Pool at offset. |
+| `0x0B` | `POP` | **0** | None | `[a] -> []` | Discard top 16-bit word from stack. |
+| `0x0C` | `DUP` | **0** | None | `[a] -> [a, a]` | Duplicate top 16-bit word. |
+| `0x0D` | `SWAP` | **0** | None | `[a, b] -> [b, a]`| Swap top two 16-bit words. |
 
 #### Group 2: Variables & Structs (`0x20 .. 0x3F`)
 
@@ -276,8 +274,6 @@ Every instruction starts with a **1-byte opcode**. The opcode explicitly defines
 | `0x53` | `MIN` | **0** | None | `[a, b] -> [min(a,b)]`| Signed integer minimum. |
 | `0x54` | `MAX` | **0** | None | `[a, b] -> [max(a,b)]`| Signed integer maximum. |
 | `0x55` | `PARSE_INT`| **0** | None | `[str, radix] -> [val, ok]`| Parse integer from string with radix autodetection. Pushes parsed value and success Boolean (`$0001` or `$0000`). |
-| `0x56` | `ADD32` | **0** | None | `[a_hi, a_lo, b_hi, b_lo] -> [r_hi, r_lo]` | 32-bit integer addition. |
-| `0x57` | `SUB32` | **0** | None | `[a_hi, a_lo, b_hi, b_lo] -> [r_hi, r_lo]` | 32-bit integer subtraction. |
 
 #### Group 4: Control Flow & Function Calls (`0x60 .. 0x6F`)
 
@@ -286,7 +282,7 @@ Every instruction starts with a **1-byte opcode**. The opcode explicitly defines
 | `0x60` | `JUMP` | **2** | `<rel16>` | `[] -> []` | Relative unconditional branch. |
 | `0x61` | `JUMP_IF_TRUE`| **2** | `<rel16>` | `[cond] -> []` | Pop 16-bit word; branch if `cond != $0000`. |
 | `0x62` | `JUMP_IF_FALSE`| **2**| `<rel16>` | `[cond] -> []` | Pop 16-bit word; branch if `cond == $0000`. |
-| `0x63` | `CALL` | **3** | `<imm16>, <imm8>` | `[args...] -> [res]` | Call function index `imm16` with `imm8` arguments. |
+| `0x63` | `CALL` | **2** | `<imm16>` | `[args...] -> [res]` | Call function index `imm16` (parameter count defined in Function Table). |
 | `0x64` | `RET` | **0** | None | `[res] -> [...]` | Return top 16-bit word to caller. |
 | `0x65` | `RET_VOID` | **0** | None | `[] -> [...]` | Return `nil` (`$0000`) to caller. |
 | `0x66` | `HALT` | **0** | None | `[] -> []` | Terminate VM execution cleanly (exit 0). |
@@ -518,7 +514,7 @@ fn split_asm_line(line: str) -> (str, str):
 Offset   Opcode  ArgBytes  Operands       Assembly Mnemonic          Description
 -------------------------------------------------------------------------------------------------
 0x0020   0x20    0         None           LOAD_LOCAL_0               Push line (FP[0])
-0x0021   0x0B    2         0x0012         PUSH_STR 0x0012            Push "\r\n" from String Pool
+0x0021   0x0A    2         0x0012         PUSH_STR 0x0012            Push "\r\n" from String Pool
 0x0024   0x74    0         None           STR_RSTRIP                 s = line.rstrip("\r\n")
 0x0025   0x25    0         None           STORE_LOCAL_1              Store into s (FP[1])
 
@@ -529,24 +525,24 @@ Offset   Opcode  ArgBytes  Operands       Assembly Mnemonic          Description
 
 ; if s == "":
 0x002A   0x21    0         None           LOAD_LOCAL_1               Push s
-0x002B   0x0B    2         0x0000         PUSH_STR 0x0000            Push "" (empty string)
+0x002B   0x0A    2         0x0000         PUSH_STR 0x0000            Push "" (empty string)
 0x002E   0x4C    0         None           CMP_EQ                     s == "" -> $0001 or $0000
 0x002F   0x61    2         0x001C         JUMP_IF_TRUE +28 (L_RET)   If != 0 -> return ("", line)
 
 ; or s_strip.startswith("*"):
 0x0032   0x22    0         None           LOAD_LOCAL_2               Push s_strip
-0x0033   0x0B    2         0x0018         PUSH_STR 0x0018            Push "*"
+0x0033   0x0A    2         0x0018         PUSH_STR 0x0018            Push "*"
 0x0036   0x78    0         None           STR_STARTSWITH             s_strip.startswith("*")
 0x0037   0x61    2         0x0014         JUMP_IF_TRUE +20 (L_RET)   If != 0 -> return ("", line)
 
 ; or s_strip.startswith(";"):
 0x003A   0x22    0         None           LOAD_LOCAL_2               Push s_strip
-0x003B   0x0B    2         0x001C         PUSH_STR 0x001C            Push ";"
+0x003B   0x0A    2         0x001C         PUSH_STR 0x001C            Push ";"
 0x003E   0x78    0         None           STR_STARTSWITH             s_strip.startswith(";")
 0x003F   0x62    2         0x000E         JUMP_IF_FALSE +14          If == 0 -> proceed to pos=0
 
 ; L_RET: return ("", line)
-0x0042   0x0B    2         0x0000         PUSH_STR 0x0000            Push ""
+0x0042   0x0A    2         0x0000         PUSH_STR 0x0000            Push ""
 0x0045   0x20    0         None           LOAD_LOCAL_0               Push line
 0x0046   0x64    0         None           RET                        Return 2-tuple on stack
 ```
