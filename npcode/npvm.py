@@ -55,10 +55,11 @@ class FunctionMetadata:
 
 
 class CallFrame:
-    def __init__(self, func: FunctionMetadata, return_pc: int, return_func: Optional[FunctionMetadata]):
+    def __init__(self, func: FunctionMetadata, return_pc: int, return_func: Optional[FunctionMetadata], frame_addr: int = 0):
         self.func = func
         self.return_pc = return_pc
         self.return_func = return_func
+        self.frame_addr = frame_addr
         # Local variable storage by slot index (slot -> list of 16-bit words)
         self.slots: List[List[int]] = []
         for sz in func.var_sizes:
@@ -292,8 +293,10 @@ class NPVM:
         if not self.functions:
             return 0
 
+        self.frame_sp = 0xE000
         entry_func = self.functions[self.entry_func_index]
-        self.current_frame = CallFrame(entry_func, return_pc=-1, return_func=None)
+        self.frame_sp -= entry_func.frame_size
+        self.current_frame = CallFrame(entry_func, return_pc=-1, return_func=None, frame_addr=self.frame_sp)
         self.call_stack.append(self.current_frame)
         self.pc = entry_func.code_offset
         self.running = True
@@ -491,6 +494,43 @@ class NPVM:
             self._push(addr)
             if self.verbose:
                 print(f"       -> ADDR_OF_GLOBAL slot {arg} => 0x{addr:04X}")
+        elif opcode == 0x31:  # PEEK2
+            addr = self._pop()
+            val = struct.unpack_from(">H", self.memory, addr)[0]
+            self._push(val)
+            if self.verbose:
+                print(f"       -> PEEK2 at 0x{addr:04X} => 0x{val:04X}")
+        elif opcode == 0x32:  # POKE2
+            val = self._pop()
+            addr = self._pop()
+            struct.pack_into(">H", self.memory, addr, val)
+            if self.verbose:
+                print(f"       -> POKE2 at 0x{addr:04X} <- 0x{val:04X}")
+        elif opcode == 0x33:  # PEEK1
+            addr = self._pop()
+            val = self.memory[addr]
+            self._push(val)
+            if self.verbose:
+                print(f"       -> PEEK1 at 0x{addr:04X} => 0x{val:02X}")
+        elif opcode == 0x34:  # POKE1
+            val = self._pop()
+            addr = self._pop()
+            self.memory[addr] = val & 0xFF
+            if self.verbose:
+                print(f"       -> POKE1 at 0x{addr:04X} <- 0x{val & 0xFF:02X}")
+        elif opcode == 0x35:  # ADDR_OF_LOCAL
+            offset = sum(self.current_frame.func.var_sizes[:arg])
+            addr = self.current_frame.frame_addr + offset
+            self._push(addr)
+            if self.verbose:
+                print(f"       -> ADDR_OF_LOCAL slot {arg} => 0x{addr:04X}")
+        elif opcode == 0x36:  # SHL1_ADD
+            index = self._pop()
+            base = self._pop()
+            res = (base + (index << 1)) & 0xFFFF
+            self._push(res)
+            if self.verbose:
+                print(f"       -> SHL1_ADD base 0x{base:04X} + (index {index} << 1) => 0x{res:04X}")
 
         # -------------------------------------------------------------
         # Group 3: Arithmetic, Logic & Comparisons (0x40 .. 0x5F)
@@ -611,7 +651,8 @@ class NPVM:
             if func_idx >= len(self.functions):
                 raise VMError(f"Call to invalid function index: {func_idx}", inst_pc, self.current_frame.func.name)
             target_fn = self.functions[func_idx]
-            new_frame = CallFrame(target_fn, return_pc=self.pc, return_func=self.current_frame.func)
+            self.frame_sp -= target_fn.frame_size
+            new_frame = CallFrame(target_fn, return_pc=self.pc, return_func=self.current_frame.func, frame_addr=self.frame_sp)
             # Pop arguments into parameter slots in reverse order
             for p_idx in reversed(range(target_fn.arg_count)):
                 sz = target_fn.var_sizes[p_idx]
@@ -620,6 +661,10 @@ class NPVM:
                 for _ in range(word_count):
                     words.insert(0, self._pop())
                 new_frame.slots[p_idx] = words
+                offset = sum(target_fn.var_sizes[:p_idx])
+                addr = new_frame.frame_addr + offset
+                for i, w in enumerate(words):
+                    struct.pack_into(">H", self.memory, addr + i * 2, w)
 
             self.call_stack.append(new_frame)
             self.current_frame = new_frame
@@ -1051,7 +1096,14 @@ class NPVM:
                 sys.stdout.flush()
 
     def _load_local(self, slot: int):
-        words = self.current_frame.slots[slot]
+        offset = sum(self.current_frame.func.var_sizes[:slot])
+        addr = self.current_frame.frame_addr + offset
+        word_count = self.current_frame.func.var_sizes[slot] // 2
+        words = [
+            struct.unpack_from(">H", self.memory, addr + i * 2)[0]
+            for i in range(word_count)
+        ]
+        self.current_frame.slots[slot] = words
         for w in words:
             self._push(w)
 
@@ -1061,6 +1113,10 @@ class NPVM:
         for _ in range(word_count):
             words.insert(0, self._pop())
         self.current_frame.slots[slot] = words
+        offset = sum(self.current_frame.func.var_sizes[:slot])
+        addr = self.current_frame.frame_addr + offset
+        for i, w in enumerate(words):
+            struct.pack_into(">H", self.memory, addr + i * 2, w)
         if self.verbose:
             val_repr = self._format_value(words)
             print(f"       -> STORE_LOCAL slot {slot} <- {val_repr}")
@@ -1088,6 +1144,7 @@ class NPVM:
 
     def _return_from_func(self, return_words: List[int]):
         finished_frame = self.call_stack.pop()
+        self.frame_sp += finished_frame.func.frame_size
         if self.call_stack:
             self.current_frame = self.call_stack[-1]
             self.pc = finished_frame.return_pc

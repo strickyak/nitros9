@@ -190,6 +190,12 @@ CHAR_VAL    = 'Z'
     LOAD_FIELD 2
     STORE_FIELD 2
     ADDR_OF_GLOBAL g_counter
+    PEEK2
+    POKE2
+    PEEK1
+    POKE1
+    ADDR_OF_LOCAL 0
+    SHL1_ADD
 
     ADD
     SUB

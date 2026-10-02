@@ -62,6 +62,12 @@ OPCODE_TABLE = {
     0x2E: ("LOAD_FIELD", 1, "field8", "Load word from struct field at offset imm8"),
     0x2F: ("STORE_FIELD", 1, "field8", "Store word into struct field at offset imm8"),
     0x30: ("ADDR_OF_GLOBAL", 2, "global16", "Push 16-bit memory address of global variable slot imm16"),
+    0x31: ("PEEK2", 0, "none", "Load 16-bit word from memory at addr"),
+    0x32: ("POKE2", 0, "none", "Store 16-bit word to memory at addr"),
+    0x33: ("PEEK1", 0, "none", "Load 8-bit unsigned byte from memory at addr"),
+    0x34: ("POKE1", 0, "none", "Store 8-bit byte to memory at addr"),
+    0x35: ("ADDR_OF_LOCAL", 1, "local8", "Push 16-bit memory address of local variable slot imm8"),
+    0x36: ("SHL1_ADD", 0, "none", "Shift index left 1 bit and add to base address: base + (index << 1)"),
 
     # Group 3: Arithmetic, Logic & Comparisons (0x40 .. 0x5F)
     0x40: ("ADD", 0, "none", "16-bit integer addition"),
@@ -153,3 +159,31 @@ MNEMONIC_TO_OPCODE = {
     info[0]: (op, info[1], info[2])
     for op, info in OPCODE_TABLE.items()
 }
+
+# Aliases
+MNEMONIC_TO_OPCODE["PEEK"] = MNEMONIC_TO_OPCODE["PEEK2"]
+MNEMONIC_TO_OPCODE["PEEK_WORD"] = MNEMONIC_TO_OPCODE["PEEK2"]
+MNEMONIC_TO_OPCODE["PEEKW"] = MNEMONIC_TO_OPCODE["PEEK2"]
+MNEMONIC_TO_OPCODE["GET_WORD_FIELD"] = MNEMONIC_TO_OPCODE["PEEK2"]
+MNEMONIC_TO_OPCODE["GETWORDFIELD"] = MNEMONIC_TO_OPCODE["PEEK2"]
+
+MNEMONIC_TO_OPCODE["POKE"] = MNEMONIC_TO_OPCODE["POKE2"]
+MNEMONIC_TO_OPCODE["POKE_WORD"] = MNEMONIC_TO_OPCODE["POKE2"]
+MNEMONIC_TO_OPCODE["POKEW"] = MNEMONIC_TO_OPCODE["POKE2"]
+MNEMONIC_TO_OPCODE["SET_WORD_FIELD"] = MNEMONIC_TO_OPCODE["POKE2"]
+MNEMONIC_TO_OPCODE["SETWORDFIELD"] = MNEMONIC_TO_OPCODE["POKE2"]
+
+MNEMONIC_TO_OPCODE["PEEKB"] = MNEMONIC_TO_OPCODE["PEEK1"]
+MNEMONIC_TO_OPCODE["PEEK_BYTE"] = MNEMONIC_TO_OPCODE["PEEK1"]
+MNEMONIC_TO_OPCODE["GET_CHAR_FIELD"] = MNEMONIC_TO_OPCODE["PEEK1"]
+MNEMONIC_TO_OPCODE["GETCHARFIELD"] = MNEMONIC_TO_OPCODE["PEEK1"]
+
+MNEMONIC_TO_OPCODE["POKEB"] = MNEMONIC_TO_OPCODE["POKE1"]
+MNEMONIC_TO_OPCODE["POKE_BYTE"] = MNEMONIC_TO_OPCODE["POKE1"]
+MNEMONIC_TO_OPCODE["SET_CHAR_FIELD"] = MNEMONIC_TO_OPCODE["POKE1"]
+MNEMONIC_TO_OPCODE["SETCHARFIELD"] = MNEMONIC_TO_OPCODE["POKE1"]
+
+MNEMONIC_TO_OPCODE["ADDROFLOCAL"] = MNEMONIC_TO_OPCODE["ADDR_OF_LOCAL"]
+MNEMONIC_TO_OPCODE["SHL1ADD"] = MNEMONIC_TO_OPCODE["SHL1_ADD"]
+MNEMONIC_TO_OPCODE["INDEX2"] = MNEMONIC_TO_OPCODE["SHL1_ADD"]
+
