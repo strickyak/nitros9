@@ -364,7 +364,9 @@ def parse_size_descriptor(desc: str) -> int:
     desc = desc.strip().lower()
     if desc.startswith(":"):
         desc = desc[1:].strip()
-    if desc in ("scalar", "int", "int16", "uint", "uint16", "bool", "buf", "word"):
+    if desc in ("byte", "uint8", "bool"):
+        return 1
+    if desc in ("scalar", "word", "int", "int16", "uint", "uint16", "buf"):
         return 2
     if desc in ("slice", "str", "string", "list", "dict"):
         return 6

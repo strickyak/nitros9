@@ -132,6 +132,8 @@ OPCODE_TABLE = {
     0x97: ("LIST_APPEND", 0, "none", "Append 16-bit word to list slice"),
     0x98: ("LIST_POP", 0, "none", "Pop and return last 16-bit word"),
     0x99: ("LIST_SORT_BY_LEN", 0, "none", "Sort list of string slices by length"),
+    0x9A: ("STR_APPEND", 0, "none", "Append 1-byte char to string slice"),
+    0x9B: ("SLICE_APPEND_STR", 0, "none", "Append 6-byte string slice to slice[string]"),
 
     # Group 7: Regular Expressions (0xB0 .. 0xBF)
     0xB0: ("REG_MATCH", 2, "imm16", "Anchored regex match"),

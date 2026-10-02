@@ -63,7 +63,7 @@ class CallFrame:
         # Local variable storage by slot index (slot -> list of 16-bit words)
         self.slots: List[List[int]] = []
         for sz in func.var_sizes:
-            word_count = sz // 2
+            word_count = (sz + 1) // 2
             self.slots.append([0] * word_count)
 
 
@@ -226,15 +226,14 @@ class NPVM:
         self.spool_base = 0x0100  # Start string pool at 256
         self.memory[self.spool_base : self.spool_base + self.string_pool_size] = self.raw_binary[spool_off : spool_off + self.string_pool_size]
 
-        # Globals Data Section in VM memory (aligned after String Pool)
-        self.globals_base = (self.spool_base + self.string_pool_size + 1) & ~1
+        # Globals Data Section in VM memory
+        self.globals_base = self.spool_base + self.string_pool_size
         self.global_addrs = []
         curr_g = self.globals_base
         for sz in self.global_sizes:
-            curr_g = (curr_g + 1) & ~1
             self.global_addrs.append(curr_g)
             curr_g += sz
-        self.globals_end = (curr_g + 1) & ~1
+        self.globals_end = curr_g
 
         # Parse string pool entries for disassembly/tracing
         self._parse_string_pool(self.spool_base, self.string_pool_size)
@@ -296,6 +295,7 @@ class NPVM:
         self.frame_sp = 0xE000
         entry_func = self.functions[self.entry_func_index]
         self.frame_sp -= entry_func.frame_size
+        self.memory[self.frame_sp : self.frame_sp + entry_func.frame_size] = b"\x00" * entry_func.frame_size
         self.current_frame = CallFrame(entry_func, return_pc=-1, return_func=None, frame_addr=self.frame_sp)
         self.call_stack.append(self.current_frame)
         self.pc = entry_func.code_offset
@@ -652,33 +652,36 @@ class NPVM:
                 raise VMError(f"Call to invalid function index: {func_idx}", inst_pc, self.current_frame.func.name)
             target_fn = self.functions[func_idx]
             self.frame_sp -= target_fn.frame_size
+            self.memory[self.frame_sp : self.frame_sp + target_fn.frame_size] = b"\x00" * target_fn.frame_size
             new_frame = CallFrame(target_fn, return_pc=self.pc, return_func=self.current_frame.func, frame_addr=self.frame_sp)
             # Pop arguments into parameter slots in reverse order
             for p_idx in reversed(range(target_fn.arg_count)):
                 sz = target_fn.var_sizes[p_idx]
-                word_count = sz // 2
-                words = []
-                for _ in range(word_count):
-                    words.insert(0, self._pop())
-                new_frame.slots[p_idx] = words
                 offset = sum(target_fn.var_sizes[:p_idx])
                 addr = new_frame.frame_addr + offset
-                for i, w in enumerate(words):
-                    struct.pack_into(">H", self.memory, addr + i * 2, w)
+                if sz == 1:
+                    val = self._pop()
+                    self.memory[addr] = val & 0xFF
+                    new_frame.slots[p_idx] = [val & 0xFF]
+                else:
+                    word_count = sz // 2
+                    words = []
+                    for _ in range(word_count):
+                        words.insert(0, self._pop())
+                    new_frame.slots[p_idx] = words
+                    for i, w in enumerate(words):
+                        struct.pack_into(">H", self.memory, addr + i * 2, w)
 
             self.call_stack.append(new_frame)
             self.current_frame = new_frame
             self.pc = target_fn.code_offset
 
         elif opcode == 0x64:  # RET
-            ret_val = self._pop()
-            self._return_from_func([ret_val])
+            self._return_from_func([])
         elif opcode == 0x65:  # RET_SLICE
-            ret_words = [self._pop() for _ in range(3)]  # [len, cap, ptr]
-            ret_words.reverse()  # [ptr, cap, len]
-            self._return_from_func(ret_words)
+            self._return_from_func([])
         elif opcode == 0x66:  # RET_VOID
-            self._return_from_func([0x0000])
+            self._return_from_func([])
         elif opcode == 0x67:  # HALT
             self.running = False
             self.exit_code = 0
@@ -735,6 +738,8 @@ class NPVM:
             a_ptr, a_cap, a_len = self._pop_slice()
             a_bytes = bytes(self.memory[a_ptr : a_ptr + a_len])
             b_bytes = bytes(self.memory[b_ptr : b_ptr + b_len])
+            if self.verbose:
+                print(f"       -> STR_CMP {a_bytes!r} vs {b_bytes!r}")
             if a_bytes == b_bytes:
                 self._push(0)
             elif a_bytes < b_bytes:
@@ -948,6 +953,34 @@ class NPVM:
             for i, p in enumerate(ptrs):
                 struct.pack_into(">H", self.memory, lptr + i * 2, p)
             self._push_slice(lptr, lcap, llen)
+        elif opcode == 0x9A:  # STR_APPEND
+            char_code = self._pop() & 0xFF
+            ptr, cap, length = self._pop_slice()
+            if length >= cap:
+                new_cap = max(cap * 2, 8)
+                new_buf = self.heap.alloc(new_cap)
+                if ptr != 0 and length > 0:
+                    self.memory[new_buf : new_buf + length] = self.memory[ptr : ptr + length]
+                    self.heap.free(ptr)
+                ptr = new_buf
+                cap = new_cap
+            self.memory[ptr + length] = char_code
+            length += 1
+            self._push_slice(ptr, cap, length)
+        elif opcode == 0x9B:  # SLICE_APPEND_STR
+            s_ptr, s_cap, s_len = self._pop_slice()
+            l_ptr, l_cap, l_len = self._pop_slice()
+            if l_len >= l_cap:
+                new_cap = max(l_cap * 2, 8)
+                new_buf = self.heap.alloc(new_cap * 6)
+                if l_ptr != 0 and l_len > 0:
+                    self.memory[new_buf : new_buf + l_len * 6] = self.memory[l_ptr : l_ptr + l_len * 6]
+                    self.heap.free(l_ptr)
+                l_ptr = new_buf
+                l_cap = new_cap
+            struct.pack_into(">HHH", self.memory, l_ptr + l_len * 6, s_ptr, s_cap, s_len)
+            l_len += 1
+            self._push_slice(l_ptr, l_cap, l_len)
 
         # -------------------------------------------------------------
         # Group 7: Regular Expressions (0xB0 .. 0xBF)
@@ -1098,49 +1131,72 @@ class NPVM:
     def _load_local(self, slot: int):
         offset = sum(self.current_frame.func.var_sizes[:slot])
         addr = self.current_frame.frame_addr + offset
-        word_count = self.current_frame.func.var_sizes[slot] // 2
-        words = [
-            struct.unpack_from(">H", self.memory, addr + i * 2)[0]
-            for i in range(word_count)
-        ]
-        self.current_frame.slots[slot] = words
-        for w in words:
-            self._push(w)
+        sz = self.current_frame.func.var_sizes[slot]
+        if sz == 1:
+            val = self.memory[addr]
+            self.current_frame.slots[slot] = [val]
+            self._push(val)
+        else:
+            word_count = sz // 2
+            words = [
+                struct.unpack_from(">H", self.memory, addr + i * 2)[0]
+                for i in range(word_count)
+            ]
+            self.current_frame.slots[slot] = words
+            for w in words:
+                self._push(w)
 
     def _store_local(self, slot: int):
-        word_count = len(self.current_frame.slots[slot])
-        words = []
-        for _ in range(word_count):
-            words.insert(0, self._pop())
-        self.current_frame.slots[slot] = words
+        sz = self.current_frame.func.var_sizes[slot]
         offset = sum(self.current_frame.func.var_sizes[:slot])
         addr = self.current_frame.frame_addr + offset
-        for i, w in enumerate(words):
-            struct.pack_into(">H", self.memory, addr + i * 2, w)
-        if self.verbose:
-            val_repr = self._format_value(words)
-            print(f"       -> STORE_LOCAL slot {slot} <- {val_repr}")
+        if sz == 1:
+            val = self._pop()
+            self.memory[addr] = val & 0xFF
+            self.current_frame.slots[slot] = [val & 0xFF]
+            if self.verbose:
+                print(f"       -> STORE_LOCAL slot {slot} <- 0x{val & 0xFF:02X}")
+        else:
+            word_count = sz // 2
+            words = []
+            for _ in range(word_count):
+                words.insert(0, self._pop())
+            self.current_frame.slots[slot] = words
+            for i, w in enumerate(words):
+                struct.pack_into(">H", self.memory, addr + i * 2, w)
+            if self.verbose:
+                val_repr = self._format_value(words)
+                print(f"       -> STORE_LOCAL slot {slot} <- {val_repr}")
 
     def _load_global(self, slot: int):
         addr = self.global_addrs[slot]
         sz = self.global_sizes[slot]
-        word_count = (sz + 1) // 2
-        for i in range(word_count):
-            w = struct.unpack_from(">H", self.memory, addr + i * 2)[0]
-            self._push(w)
+        if sz == 1:
+            self._push(self.memory[addr])
+        else:
+            word_count = sz // 2
+            for i in range(word_count):
+                w = struct.unpack_from(">H", self.memory, addr + i * 2)[0]
+                self._push(w)
 
     def _store_global(self, slot: int):
         addr = self.global_addrs[slot]
         sz = self.global_sizes[slot]
-        word_count = (sz + 1) // 2
-        words = []
-        for _ in range(word_count):
-            words.insert(0, self._pop())
-        for i, w in enumerate(words):
-            struct.pack_into(">H", self.memory, addr + i * 2, w)
-        if self.verbose:
-            val_repr = self._format_value(words)
-            print(f"       -> STORE_GLOBAL slot {slot} <- {val_repr}")
+        if sz == 1:
+            val = self._pop()
+            self.memory[addr] = val & 0xFF
+            if self.verbose:
+                print(f"       -> STORE_GLOBAL slot {slot} <- 0x{val & 0xFF:02X}")
+        else:
+            word_count = sz // 2
+            words = []
+            for _ in range(word_count):
+                words.insert(0, self._pop())
+            for i, w in enumerate(words):
+                struct.pack_into(">H", self.memory, addr + i * 2, w)
+            if self.verbose:
+                val_repr = self._format_value(words)
+                print(f"       -> STORE_GLOBAL slot {slot} <- {val_repr}")
 
     def _return_from_func(self, return_words: List[int]):
         finished_frame = self.call_stack.pop()
