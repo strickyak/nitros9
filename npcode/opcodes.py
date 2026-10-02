@@ -68,6 +68,7 @@ OPCODE_TABLE = {
     0x34: ("POKE1", 0, "none", "Store 8-bit byte to memory at addr"),
     0x35: ("ADDR_OF_LOCAL", 1, "local8", "Push 16-bit memory address of local variable slot imm8"),
     0x36: ("SHL1_ADD", 0, "none", "Shift index left 1 bit and add to base address: base + (index << 1)"),
+    0x37: ("ZALLOC", 0, "none", "Allocate zeroed buffer from heap"),
 
     # Group 3: Arithmetic, Logic & Comparisons (0x40 .. 0x5F)
     0x40: ("ADD", 0, "none", "16-bit integer addition"),

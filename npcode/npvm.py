@@ -531,6 +531,14 @@ class NPVM:
             self._push(res)
             if self.verbose:
                 print(f"       -> SHL1_ADD base 0x{base:04X} + (index {index} << 1) => 0x{res:04X}")
+        elif opcode == 0x37:  # ZALLOC
+            size = self._pop()
+            addr = self.heap.alloc(size)
+            if addr != 0:
+                self.memory[addr : addr + size] = b"\x00" * size
+            self._push(addr)
+            if self.verbose:
+                print(f"       -> ZALLOC size {size} => 0x{addr:04X}")
 
         # -------------------------------------------------------------
         # Group 3: Arithmetic, Logic & Comparisons (0x40 .. 0x5F)
